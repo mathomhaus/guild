@@ -1,7 +1,7 @@
 name: Feature request
 description: Propose a new capability or enhancement for guild.
 title: "[feature] "
-labels: ["enhancement"]
+labels: ["enhancement", "needs-triage"]
 body:
   - type: markdown
     attributes:
