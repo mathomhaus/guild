@@ -180,13 +180,17 @@ func (p *UpdateParams) Empty() bool {
 	return true
 }
 
-// ClearResult is returned by Clear. Cleared is the freshly-done quest;
-// Unblocked lists every quest whose `blocked → next` flip was caused
-// by this Clear call (cascade-unblock invariant).
-type ClearResult struct {
+// FulfillResult is returned by Fulfill. Cleared is the freshly-done quest;
+// Unblocked lists every quest whose `blocked → next` flip was caused by
+// this Fulfill call (cascade-unblock invariant). The `Cleared` field name
+// is preserved for backward compat in callers; the semantics are the same.
+type FulfillResult struct {
 	Cleared   *Quest
 	Unblocked []*Quest
 }
+
+// ClearResult is a backward-compat type alias for FulfillResult.
+type ClearResult = FulfillResult
 
 // ForfeitResult is returned by Forfeit. Quest is the target quest's
 // current state. AlreadyNext is true when Forfeit was a no-op because

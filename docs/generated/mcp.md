@@ -2,7 +2,7 @@
 
 # guild MCP tool catalog
 
-Every tool a registered MCP client sees. 37 tools.
+Every tool a registered MCP client sees. 38 tools.
 
 ## Tools
 
@@ -31,9 +31,10 @@ Every tool a registered MCP client sees. 37 tools.
 - [`quest_bounties`](#quest_bounties) — On-demand session snapshot: brief, oath, echoes, top task, and parallel candidates.
 - [`quest_brief`](#quest_brief) — Session-end briefing for the next agent.
 - [`quest_campfire`](#quest_campfire) — Save a structured working-state checkpoint (hypothesis, tried, next, token warning) before the context compacts.
-- [`quest_clear`](#quest_clear) — Complete a quest.
+- [`quest_clear`](#quest_clear) — Fulfill a quest.
 - [`quest_epic`](#quest_epic) — Set the campaign name on a batch of quests.
 - [`quest_forfeit`](#quest_forfeit) — Release a claimed quest back to the queue.
+- [`quest_fulfill`](#quest_fulfill) — Fulfill a quest.
 - [`quest_guild`](#quest_guild) — Per-project quest summary grouped by campaign: counts of next, in-progress, blocked, and done quests.
 - [`quest_journal`](#quest_journal) — Task-scoped scratchpad.
 - [`quest_list`](#quest_list) — All open tasks.
@@ -914,7 +915,7 @@ _no arguments_
 
 ## `quest_clear`
 
-Complete a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.
+Fulfill a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.
 
 _no arguments_
 
@@ -928,7 +929,7 @@ _no arguments_
       "type": "string"
     },
     "quest_id": {
-      "description": "QUEST-NNN to mark complete",
+      "description": "QUEST-NNN to fulfill",
       "type": "string"
     },
     "report": {
@@ -1015,6 +1016,40 @@ _no arguments_
   },
   "required": [
     "quest_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+## `quest_fulfill`
+
+Fulfill a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.
+
+_no arguments_
+
+<details><summary>Raw JSON schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string"
+    },
+    "quest_id": {
+      "description": "QUEST-NNN to fulfill",
+      "type": "string"
+    },
+    "report": {
+      "description": "specific completion report: commit hash, files, issues — REQUIRED",
+      "type": "string"
+    }
+  },
+  "required": [
+    "quest_id",
+    "report"
   ],
   "type": "object"
 }

@@ -10,35 +10,45 @@ import (
 	"github.com/mathomhaus/guild/internal/command"
 )
 
-type ClearInput struct {
-	QuestID string `json:"quest_id" jsonschema:"QUEST-NNN to mark complete"`
+// FulfillInput carries the args for quest fulfillment.
+// ClearInput is a backward-compat type alias.
+type FulfillInput struct {
+	QuestID string `json:"quest_id" jsonschema:"QUEST-NNN to fulfill"`
 	Report  string `json:"report" jsonschema:"specific completion report: commit hash, files, issues — REQUIRED"`
 	Project string `json:"project,omitempty"`
 }
 
-type ClearOutput struct {
-	Result    *ClearResult `json:"result"`
-	BriefHint string       `json:"brief_hint,omitempty"`
+type FulfillOutput struct {
+	Result    *FulfillResult `json:"result"`
+	BriefHint string         `json:"brief_hint,omitempty"`
 }
 
-var ClearCommand = &command.Command[ClearInput, ClearOutput]{
-	Name:    "quest_clear",
-	CLIPath: []string{"quest", "clear"},
-	Short:   "complete a quest (cascades unblock)",
-	Long:    "Complete a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.",
+// Backward-compat type aliases so existing callers keep compiling.
+type ClearInput = FulfillInput
+type ClearOutput = FulfillOutput
+
+// FulfillCommand is the primary quest-completion verb. `quest clear` stays
+// as a cobra alias for muscle-memory; `quest_fulfill` is the canonical MCP
+// tool name. QUEST-106 / LORE-80.
+var FulfillCommand = &command.Command[FulfillInput, FulfillOutput]{
+	Name:       "quest_fulfill",
+	CLIPath:    []string{"quest", "fulfill"},
+	CLIAliases: []string{"clear"},
+	Short:      "fulfill a quest (cascades unblock)",
+	Long:       "Fulfill a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.",
 	Args: []command.ArgSpec{
 		{
 			Name:     "quest_id",
 			Kind:     command.ArgPositional,
 			Type:     command.ArgString,
 			Required: true,
-			Help:     "QUEST-NNN to mark complete",
+			Help:     "QUEST-NNN to mark fulfilled",
 		},
 		{
 			Name: "report",
 			Kind: command.ArgFlag,
 			Type: command.ArgString,
-			// Not Required at the domain layer — Clear() accepts empty
+			// Not Required at the domain layer — Fulfill() accepts empty
 			// report and just writes the `done` event without a
 			// [completed] note. Encourage callers to pass one via Help
 			// phrasing, don't reject the call.
@@ -52,62 +62,74 @@ var ClearCommand = &command.Command[ClearInput, ClearOutput]{
 			Help:  "project override",
 		},
 	},
-	Handler: func(ctx context.Context, d command.Deps, in ClearInput) (ClearOutput, error) {
+	Handler: func(ctx context.Context, d command.Deps, in FulfillInput) (FulfillOutput, error) {
 		if strings.TrimSpace(in.QuestID) == "" {
-			return ClearOutput{}, errors.New("quest_id required")
+			return FulfillOutput{}, errors.New("quest_id required")
 		}
 		db, err := d.OpenDB(ctx)
 		if err != nil {
-			return ClearOutput{}, err
+			return FulfillOutput{}, err
 		}
 		defer func() { _ = db.Close() }()
 
 		pid, err := d.ResolveProj(ctx, in.Project)
 		if err != nil {
-			return ClearOutput{}, err
+			return FulfillOutput{}, err
 		}
-		res, err := Clear(ctx, db, pid, in.QuestID, in.Report)
+		res, err := Fulfill(ctx, db, pid, in.QuestID, in.Report)
 		if err != nil {
-			return ClearOutput{}, err
+			return FulfillOutput{}, err
 		}
 
-		out := ClearOutput{Result: res}
+		out := FulfillOutput{Result: res}
 
 		// Advisory hint: if no brief has been written recently, remind the
-		// caller to write a handoff before compacting. This is shipped via
-		// two paths, live together during the QUEST-58 migration window:
+		// caller to write a handoff before compacting. Two paths coexist
+		// during the QUEST-58 migration window:
 		//
 		//   1. HintExtras signal — the hint engine's no-brief-24h rule reads
 		//      __hints_brief_stale and fires the canonical 💡 line. Preferred.
 		//   2. out.BriefHint — legacy field; still populated so CLI paths
-		//      that don't yet route through the engine (and backward-compat
-		//      consumers of ClearOutput) keep their hint. The MCP format
-		//      function drops it when the engine is wired so we don't
-		//      render twice.
+		//      that don't yet route through the engine keep their hint. The
+		//      MCP format function drops it when the engine is wired so we
+		//      don't render twice.
 		lastAt, briefErr := LastBriefAt(ctx, db, pid)
-		stale := briefErr == nil && (lastAt.IsZero() || time.Now().Sub(lastAt) > briefStaleThreshold)
+		stale := briefErr == nil && (lastAt.IsZero() || time.Since(lastAt) > briefStaleThreshold)
 		if stale {
 			if extras := command.HintExtras(ctx); extras != nil {
 				extras["__hints_brief_stale"] = true
 			} else {
-				// No engine wired (test or cold-path CLI surface) — fall
-				// back to the legacy field so output stays consistent.
 				out.BriefHint = `no quest_brief yet this session — consider quest_brief("what was done, what's next") before compact`
 			}
 		}
 
 		return out, nil
 	},
-	CLIFormat:      func(s command.CLISink, o ClearOutput) string { return formatCleared(s, o) },
-	MCPFormat:      func(s command.MCPSink, o ClearOutput) string { return formatCleared(s, o) },
-	CLIErrorFormat: func(s command.CLISink, err error) (string, bool) { return formatClearError(s, err) },
-	MCPErrorFormat: func(s command.MCPSink, err error) (string, bool) { return formatClearError(s, err) },
+	CLIFormat:      func(s command.CLISink, o FulfillOutput) string { return formatFulfilled(s, o) },
+	MCPFormat:      func(s command.MCPSink, o FulfillOutput) string { return formatFulfilled(s, o) },
+	CLIErrorFormat: func(s command.CLISink, err error) (string, bool) { return formatFulfillError(s, err) },
+	MCPErrorFormat: func(s command.MCPSink, err error) (string, bool) { return formatFulfillError(s, err) },
 }
 
-func formatCleared(s lineListSink, o ClearOutput) string {
+// ClearCommand is the backward-compat MCP alias for FulfillCommand. It
+// points at the same handler + formatters; only the tool name differs.
+// Agents trained on `quest_clear` still work; new agents see `quest_fulfill`
+// in tool discovery. CLIOnly=false, MCPOnly=true — CLI alias is handled
+// via FulfillCommand.CLIAliases, so this struct stays off the CLI surface
+// to avoid duplicate cobra verbs.
+var ClearCommand = func() *command.Command[FulfillInput, FulfillOutput] {
+	c := *FulfillCommand
+	c.Name = "quest_clear"
+	c.MCPOnly = true
+	c.CLIAliases = nil // avoid cobra registering an orphan alias
+	c.Short = "fulfill a quest (alias for quest_fulfill; cascades unblock)"
+	return &c
+}()
+
+func formatFulfilled(s lineListSink, o FulfillOutput) string {
 	res := o.Result
 	var b strings.Builder
-	b.WriteString(s.Line("🏆", "[cleared]", fmt.Sprintf("cleared %s", res.Cleared.ID)))
+	b.WriteString(s.Line("🏆", "[fulfilled]", fmt.Sprintf("fulfilled %s", res.Cleared.ID)))
 	if len(res.Unblocked) > 0 {
 		b.WriteString("  unblocked:\n")
 		for _, q := range res.Unblocked {
@@ -124,9 +146,9 @@ func formatCleared(s lineListSink, o ClearOutput) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatClearError(s lineListSink, err error) (string, bool) {
+func formatFulfillError(s lineListSink, err error) (string, bool) {
 	if errors.Is(err, ErrNotFound) {
-		msg := fmt.Sprintf("quest_clear: %v", err)
+		msg := fmt.Sprintf("quest_fulfill: %v", err)
 		return strings.TrimRight(s.Line("❌", "[err]", msg), "\n"), true
 	}
 	return "", false

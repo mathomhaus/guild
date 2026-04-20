@@ -149,7 +149,7 @@ func init() {
 	// concern, not verb concern). See docs/architecture/COMMAND_REGISTRY.md.
 	deps := buildCLICommandDeps()
 	bindRegistryVerb(questCmd, quest.AcceptCommand, deps, "quest accept")
-	bindRegistryVerb(questCmd, quest.ClearCommand, deps, "quest clear")
+	bindRegistryVerb(questCmd, quest.FulfillCommand, deps, "quest fulfill")
 	bindRegistryVerb(questCmd, quest.ForfeitCommand, deps, "quest forfeit")
 	bindRegistryVerb(questCmd, quest.JournalCommand, deps, "quest journal")
 	bindRegistryVerb(questCmd, quest.BriefCommand, deps, "quest brief")

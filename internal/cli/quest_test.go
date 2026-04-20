@@ -68,17 +68,15 @@ func TestCLI_QuestPostClearRoundTrip(t *testing.T) {
 		t.Errorf("post stdout = %q, want contains 'posted QUEST-1: hello world'", stdout)
 	}
 
-	// Clear.
+	// Fulfill (via the `clear` cobra alias to verify QUEST-106 backward compat).
 	stdout, _, err = runQuest(t, []string{"quest", "clear",
 		"--project", "guild-cli-test",
 		"QUEST-1", "--report", "commit abc"})
 	if err != nil {
-		t.Fatalf("clear: %v", err)
+		t.Fatalf("fulfill: %v", err)
 	}
-	// QUEST-45 unified clear output — was "quest cleared: X", now matches
-	// MCP's "cleared X" header with an indented unblocked block.
-	if !strings.Contains(stdout, "cleared QUEST-1") {
-		t.Errorf("clear stdout = %q, want to contain 'cleared QUEST-1'", stdout)
+	if !strings.Contains(stdout, "fulfilled QUEST-1") {
+		t.Errorf("fulfill stdout = %q, want to contain 'fulfilled QUEST-1'", stdout)
 	}
 }
 
@@ -94,18 +92,17 @@ func TestCLI_QuestPostCascade(t *testing.T) {
 		"--depends-on", "QUEST-1", "B"}); err != nil {
 		t.Fatalf("post B: %v", err)
 	}
-	// Clear A — expect cascade 🔓 line for QUEST-2.
-	stdout, _, err := runQuest(t, []string{"quest", "clear", "-p", "guild-cli-casc", "QUEST-1"})
+	// Fulfill A — expect cascade line for QUEST-2. Using `fulfill` as
+	// primary verb (QUEST-106).
+	stdout, _, err := runQuest(t, []string{"quest", "fulfill", "-p", "guild-cli-casc", "QUEST-1"})
 	if err != nil {
-		t.Fatalf("clear A: %v", err)
+		t.Fatalf("fulfill A: %v", err)
 	}
-	// QUEST-45 unified clear output — cascade list is now indented
-	// under "unblocked:" rather than one "unblocked: <ID>" line.
-	if !strings.Contains(stdout, "cleared QUEST-1") {
-		t.Errorf("clear stdout missing cleared: %q", stdout)
+	if !strings.Contains(stdout, "fulfilled QUEST-1") {
+		t.Errorf("fulfill stdout missing fulfilled: %q", stdout)
 	}
 	if !strings.Contains(stdout, "QUEST-2") || !strings.Contains(stdout, "unblocked") {
-		t.Errorf("clear stdout missing cascade: %q", stdout)
+		t.Errorf("fulfill stdout missing cascade: %q", stdout)
 	}
 }
 

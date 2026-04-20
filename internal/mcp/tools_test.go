@@ -46,9 +46,10 @@ var expectedTools = []struct {
 	{"quest_bounties"},
 	{"quest_brief"},
 	{"quest_campfire"},
-	{"quest_clear"},
+	{"quest_clear"}, // backward-compat alias for quest_fulfill (QUEST-106)
 	{"quest_epic"},
 	{"quest_forfeit"},
+	{"quest_fulfill"},
 	{"quest_guild"},
 	{"quest_journal"},
 	{"quest_list"},
@@ -709,6 +710,8 @@ func minArgsFor(name string) map[string]any {
 		return map[string]any{"quest_id": "QUEST-1"}
 	case "quest_clear":
 		return map[string]any{"quest_id": "QUEST-1", "report": "r"}
+	case "quest_fulfill":
+		return map[string]any{"quest_id": "QUEST-1", "report": "r"}
 	case "quest_journal":
 		return map[string]any{"quest_id": "QUEST-1", "text": "t"}
 	case "quest_brief":
@@ -789,6 +792,11 @@ func smokeArgsFor(name string) map[string]any {
 	case "quest_journal":
 		return map[string]any{"quest_id": "QUEST-99999", "text": "t", "project": "testproj"}
 	case "quest_clear":
+		return map[string]any{
+			"quest_id": "QUEST-99999", "report": "r",
+			"project": "testproj",
+		}
+	case "quest_fulfill":
 		return map[string]any{
 			"quest_id": "QUEST-99999", "report": "r",
 			"project": "testproj",

@@ -23,8 +23,9 @@ import (
 // direct edits to instructions.md do. See QUEST-57 for the dynamic
 // build path and its separate tests.
 //
-// Last updated for the lazy-load tool-discovery note (Codex + Cursor).
-const wantStaticSHA = "325854527015b8efd79ab5d9b2b672119d196633fd9fad51f357150813135d48"
+// Last updated for QUEST-106: quest_clear → quest_fulfill rename with
+// backward-compat alias note.
+const wantStaticSHA = "4508848753ecaadb59348e720797424b1452469ab98ff8353893d5507a49481a"
 
 func TestStaticInstructions_Embedded(t *testing.T) {
 	if staticInstructions == "" {

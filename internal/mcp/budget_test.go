@@ -26,8 +26,11 @@ const (
 	// registered tools (descriptions + input schemas). Raised to 4500
 	// in QUEST-101 to accommodate the 5 previously-deferred tools
 	// (lore_seal, lore_catalog, quest_epic, quest_active, quest_forfeit)
-	// now in the always-on tier. Expected actual: ~4100-4300 tokens.
-	totalMaxTokens = 4500
+	// now in the always-on tier. Raised to 4700 in QUEST-106 when
+	// quest_fulfill was added alongside quest_clear as a backward-compat
+	// alias — net +~100 tokens for the duplicate tool. Expected actual:
+	// ~4400-4600 tokens.
+	totalMaxTokens = 4700
 )
 
 // TestDescriptionBudget enforces the token budgets against the full

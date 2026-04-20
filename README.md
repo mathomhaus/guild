@@ -110,7 +110,7 @@ blocked on QUEST-42 is now available for whoever walks in next.
 
 ```bash
 guild quest brief "shipped retry in commit abc1234; QUEST-43 ready to start"
-guild quest clear QUEST-42 --report "done, shipped in abc1234"
+guild quest fulfill QUEST-42 --report "done, shipped in abc1234"
 ```
 
 Tomorrow's agent — same project, maybe a different MCP client — opens

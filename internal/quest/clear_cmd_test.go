@@ -10,20 +10,31 @@ import (
 	"github.com/mathomhaus/guild/internal/quest"
 )
 
-func TestClearCommand_CobraSurface(t *testing.T) {
+// TestFulfillCommand_CobraSurface verifies the primary verb + backward-compat
+// alias both land on cobra: `quest fulfill` is the primary subcommand, and
+// `quest clear` is surfaced via CLIAliases.
+func TestFulfillCommand_CobraSurface(t *testing.T) {
 	parent := &cobra.Command{Use: "quest"}
 	parent.PersistentFlags().StringP("project", "p", "", "project")
-	quest.ClearCommand.BindCobra(parent, fakeDeps(t))
+	quest.FulfillCommand.BindCobra(parent, fakeDeps(t))
 
-	sub := findSubcommand(parent, "clear")
+	sub := findSubcommand(parent, "fulfill")
 	if sub == nil {
-		t.Fatal("clear subcommand not registered")
+		t.Fatal("fulfill subcommand not registered")
 	}
-	if got, want := sub.Use, "clear QUEST_ID"; got != want {
+	if got, want := sub.Use, "fulfill QUEST_ID"; got != want {
 		t.Errorf("Use=%q want %q", got, want)
 	}
-	if sub.Short != quest.ClearCommand.Short {
-		t.Errorf("Short=%q want %q", sub.Short, quest.ClearCommand.Short)
+	// cobra Aliases should include "clear" for muscle-memory users.
+	foundAlias := false
+	for _, a := range sub.Aliases {
+		if a == "clear" {
+			foundAlias = true
+			break
+		}
+	}
+	if !foundAlias {
+		t.Errorf("expected `clear` among aliases, got %v", sub.Aliases)
 	}
 	for _, want := range []string{"report", "json"} {
 		if sub.Flags().Lookup(want) == nil {
@@ -36,12 +47,14 @@ func TestClearCommand_CobraSurface(t *testing.T) {
 	}
 }
 
-func TestClearCommand_MCPSurface(t *testing.T) {
-	tool := quest.ClearCommand.BuildMCPForTest(fakeDeps(t))
-	if tool.Name != "quest_clear" {
-		t.Errorf("Name=%q want quest_clear", tool.Name)
+// TestFulfillCommand_MCPSurface verifies the canonical MCP tool is named
+// `quest_fulfill` and carries the new "Fulfill a quest" description.
+func TestFulfillCommand_MCPSurface(t *testing.T) {
+	tool := quest.FulfillCommand.BuildMCPForTest(fakeDeps(t))
+	if tool.Name != "quest_fulfill" {
+		t.Errorf("Name=%q want quest_fulfill", tool.Name)
 	}
-	if !strings.HasPrefix(tool.Description, "Complete a quest") {
+	if !strings.HasPrefix(tool.Description, "Fulfill a quest") {
 		t.Errorf("Description=%q", tool.Description)
 	}
 	buf, _ := json.Marshal(tool.InputSchema)
@@ -50,6 +63,20 @@ func TestClearCommand_MCPSurface(t *testing.T) {
 		if !strings.Contains(schema, want) {
 			t.Errorf("schema missing %s:\n%s", want, schema)
 		}
+	}
+}
+
+// TestClearCommand_MCPBackwardCompat verifies the MCP-only alias tool is
+// still advertised under the legacy name `quest_clear` so agents trained
+// on the pre-QUEST-106 verb continue to work.
+func TestClearCommand_MCPBackwardCompat(t *testing.T) {
+	tool := quest.ClearCommand.BuildMCPForTest(fakeDeps(t))
+	if tool.Name != "quest_clear" {
+		t.Errorf("Name=%q want quest_clear (backward-compat alias)", tool.Name)
+	}
+	// Description should still reference fulfill semantics.
+	if !strings.Contains(tool.Description, "Fulfill") {
+		t.Errorf("alias description should reference fulfill; got %q", tool.Description)
 	}
 }
 

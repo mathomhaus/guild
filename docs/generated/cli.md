@@ -45,8 +45,8 @@ Every `guild <verb>` subcommand generated from the live cobra tree.
 - [`guild quest brief`](#guild-quest-brief) — write session-end handoff for the next agent
 - [`guild quest campaign`](#guild-quest-campaign) — bulk-set campaign
 - [`guild quest campfire`](#guild-quest-campfire) — save working state before compaction
-- [`guild quest clear`](#guild-quest-clear) — complete a quest (cascades unblock)
 - [`guild quest forfeit`](#guild-quest-forfeit) — release a claim without completing
+- [`guild quest fulfill`](#guild-quest-fulfill) — fulfill a quest (cascades unblock)
 - [`guild quest guild`](#guild-quest-guild) — per-project summary by campaign
 - [`guild quest init`](#guild-quest-init) — register this repo as a guild project
 - [`guild quest journal`](#guild-quest-journal) — append a task-scoped journal note
@@ -811,25 +811,6 @@ Save a structured working-state checkpoint (hypothesis, tried, next, token warni
 | `--token-warning` | bool | `false` | context window is running low |
 | `--tried` | stringArray | `[]` | approach tried (repeatable) |
 
-## `guild quest clear`
-
-complete a quest (cascades unblock)
-
-**Usage**
-
-```
-guild quest clear QUEST_ID [flags]
-```
-
-Complete a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.
-
-**Flags**
-
-| flag | type | default | description |
-| --- | --- | --- | --- |
-| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
-| `--report` | string | `—` | completion report: commit hash, files, remaining issues |
-
 ## `guild quest forfeit`
 
 release a claim without completing
@@ -848,6 +829,27 @@ Release a claimed quest back to the queue. Use when blocked or ceding to another
 | --- | --- | --- | --- |
 | `--json` | bool | `false` | emit structured JSON result instead of formatted text |
 | `--note` | string | `—` | reason the claim is being released (optional) |
+
+## `guild quest fulfill`
+
+fulfill a quest (cascades unblock)
+
+**Usage**
+
+```
+guild quest fulfill QUEST_ID [flags]
+```
+
+**Aliases:** clear
+
+Fulfill a quest. Report is REQUIRED — commit hash, files, remaining issues. Cascades unblock dependent quests.
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+| `--report` | string | `—` | completion report: commit hash, files, remaining issues |
 
 ## `guild quest guild`
 

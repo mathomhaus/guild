@@ -60,6 +60,7 @@ var toolArgSpecs = map[string][]command.ArgSpec{
 	"quest_clear":    quest.ClearCommand.Args,
 	"quest_epic":     quest.EpicCommand.Args,
 	"quest_forfeit":  quest.ForfeitCommand.Args,
+	"quest_fulfill":  quest.FulfillCommand.Args,
 	"quest_guild":    quest.GuildCommand.Args,
 	"quest_journal":  quest.JournalCommand.Args,
 	"quest_list":     quest.ListCommand.Args,

@@ -94,6 +94,10 @@ func registerAlwaysOn(s *sdkmcp.Server) {
 	quest.AcceptCommand.BindMCP(s, mcpDeps)
 	quest.JournalCommand.BindMCP(s, mcpDeps)
 	quest.CampfireCommand.BindMCP(s, mcpDeps)
+	quest.FulfillCommand.BindMCP(s, mcpDeps)
+	// quest_clear is kept as a backward-compat MCP alias (same handler,
+	// different tool name) so agents trained on the pre-QUEST-106 verb
+	// still work. Tool discovery surfaces both; new agents prefer fulfill.
 	quest.ClearCommand.BindMCP(s, mcpDeps)
 	quest.BriefCommand.BindMCP(s, mcpDeps)
 	quest.SummonCommand.BindMCP(s, mcpDeps)

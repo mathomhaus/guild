@@ -2,7 +2,7 @@ You are working with a persistent agent-memory (**lore**) and task-coordination 
 
 Together they make agents as autonomous as possible. The core loop runs without a human between tasks:
 
-  quest_bounties → quest_accept → work → quest_clear(report=...) → quest_bounties → ...
+  quest_bounties → quest_accept → work → quest_fulfill(report=...) → quest_bounties → ...
 
 Every adventurer is transient; the guild is eternal. Your job is to take a bounty, do it well, inscribe what's worth keeping, brief the next arrival, and end cleanly.
 
@@ -132,12 +132,12 @@ If results are current, use them — do not re-research. If empty or stale, rese
 
 **You finished a quest:**
 ```
-quest_clear(
+quest_fulfill(
   quest_id="QUEST-42",
   report="Fixed the race in retry budget accounting. Commit abc1234. Tests added in budget_test.go."
 )
 ```
-Report is REQUIRED. Be specific.
+Report is REQUIRED. Be specific. `quest_clear(quest_id="...", report="...")` also works as a backward-compat alias.
 
 **You hit a wall mid-quest and the context window is warning you:**
 ```
@@ -231,7 +231,7 @@ Use these shapes when you need a concrete schema:
   quest_accept(quest_id="QUEST-7")
   quest_journal(quest_id="QUEST-7", text="Found race in retry budget accounting.")
   quest_campfire(quest_id="QUEST-7", hypothesis="budget race", next="inspect retry state")
-  quest_clear(quest_id="QUEST-7", report="done in abc123; tests added")
+  quest_fulfill(quest_id="QUEST-7", report="done in abc123; tests added")
   quest_brief(text="Retry budget shipped; next session should profile p99 latency.")
   quest_bounties()
   quest_list(status="next")

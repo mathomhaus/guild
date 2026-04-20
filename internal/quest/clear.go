@@ -9,9 +9,13 @@ import (
 	"time"
 )
 
-// Clear marks taskID as status='done' and atomically runs the cascade-
+// Clear is a backward-compat alias for Fulfill. Existing callers keep
+// compiling; new code should call Fulfill directly. QUEST-106 / LORE-80.
+var Clear = Fulfill
+
+// Fulfill marks taskID as status='done' and atomically runs the cascade-
 // unblock pass: every quest currently in status='blocked' whose full
-// depends_on list is satisfied by the post-Clear done-set flips to
+// depends_on list is satisfied by the post-Fulfill done-set flips to
 // status='next'.
 //
 // Non-negotiable correctness (QUEST-9 spec): the cascade must find
@@ -28,7 +32,7 @@ import (
 // payload) and as a `[completed] <report>` note in task_notes for
 // chronological history. If `report` is empty, only the event fires
 // (no note).
-func Clear(ctx context.Context, db *sql.DB, projectID, taskID, report string) (*ClearResult, error) {
+func Fulfill(ctx context.Context, db *sql.DB, projectID, taskID, report string) (*FulfillResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("quest: clear: nil db")
 	}
@@ -114,5 +118,5 @@ func Clear(ctx context.Context, db *sql.DB, projectID, taskID, report string) (*
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("quest: clear: commit: %w", err)
 	}
-	return &ClearResult{Cleared: cleared, Unblocked: unblocked}, nil
+	return &FulfillResult{Cleared: cleared, Unblocked: unblocked}, nil
 }
