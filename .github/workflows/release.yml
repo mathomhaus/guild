@@ -38,8 +38,8 @@ jobs:
     name: preflight tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
@@ -55,14 +55,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Fetch all history so goreleaser can generate a proper changelog
           # and correctly detect the previous tag for the diff.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           # Must match go.mod directive. Update together.
           go-version: '1.25'
@@ -79,7 +79,7 @@ jobs:
       # CGO_ENABLED=0 is set in .goreleaser.yml; repeating it here is
       # belt-and-suspenders to make the intent explicit in CI logs.
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
