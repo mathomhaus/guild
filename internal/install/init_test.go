@@ -33,6 +33,21 @@ func recordingExec(calls *[][]string) func(name string, arg ...string) *exec.Cmd
 	}
 }
 
+// fakeExecutable creates a real temp file and returns an executableFn that
+// resolves to its path. Needed so the MCP registration step's resolveAbsBinPath
+// treats it as a durable install location (not a go-build cache miss). CI
+// runners have no system-installed guild, so this plug is essential there.
+func fakeExecutable(t *testing.T) func() (string, error) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "guild-*")
+	if err != nil {
+		t.Fatalf("create fake executable: %v", err)
+	}
+	_ = f.Close()
+	path := f.Name()
+	return func() (string, error) { return path, nil }
+}
+
 // makeRepo creates a temp directory whose basename is name, simulating a repo root.
 func makeRepo(t *testing.T, name string) string {
 	t.Helper()
@@ -424,13 +439,14 @@ func TestInit_MCPRegistration_YesFlagInvokesExec(t *testing.T) {
 	var calls [][]string
 
 	_, err := Init(ctx, dir, InitOptions{
-		Yes:         true,
-		Out:         &out,
-		In:          &bytes.Buffer{},
-		LoreDBPath:  loreDB,
-		QuestDBPath: questDB,
-		clients:     []Client{fakeClient("FakeClient")},
-		execCmdFn:   recordingExec(&calls),
+		Yes:          true,
+		Out:          &out,
+		In:           &bytes.Buffer{},
+		LoreDBPath:   loreDB,
+		QuestDBPath:  questDB,
+		clients:      []Client{fakeClient("FakeClient")},
+		execCmdFn:    recordingExec(&calls),
+		executableFn: fakeExecutable(t),
 	})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -455,12 +471,13 @@ func TestInit_MCPRegistration_InteractiveYes(t *testing.T) {
 	// "Run: ... [y/N]" from MCPInstall. Both answered "y".
 	in := bytes.NewBufferString("y\ny\n")
 	_, err := Init(ctx, dir, InitOptions{
-		Out:         &out,
-		In:          in,
-		LoreDBPath:  loreDB,
-		QuestDBPath: questDB,
-		clients:     []Client{fakeClient("FakeClient")},
-		execCmdFn:   recordingExec(&calls),
+		Out:          &out,
+		In:           in,
+		LoreDBPath:   loreDB,
+		QuestDBPath:  questDB,
+		clients:      []Client{fakeClient("FakeClient")},
+		execCmdFn:    recordingExec(&calls),
+		executableFn: fakeExecutable(t),
 	})
 	if err != nil {
 		t.Fatalf("Init: %v", err)

@@ -84,6 +84,11 @@ type InitOptions struct {
 	// execCmdFn is passed through to MCPInstall when invoking MCP registration.
 	// Nil → real exec.Command. Injected in tests to capture the registration call.
 	execCmdFn func(name string, arg ...string) *exec.Cmd
+	// executableFn is passed through to MCPInstall for binary-path resolution.
+	// Nil → os.Executable. Injected in tests so CI runners (which have no
+	// durable guild binary installed) can resolve to a temp-file path and
+	// avoid the "binary not found in any durable location" error.
+	executableFn func() (string, error)
 }
 
 // InitResult carries what Init accomplished so callers can inspect or log.
@@ -270,13 +275,17 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 	// No-client path keeps the manual-setup hint.
 	if len(detected) > 0 {
 		fmt.Fprintln(opts.Out)
+		execFn := opts.executableFn
+		if execFn == nil {
+			execFn = os.Executable
+		}
 		mcpOpts := MCPInstallOptions{
 			Run:          true,
 			Yes:          opts.Yes,
 			Out:          opts.Out,
 			In:           opts.In,
 			clients:      detected,
-			executableFn: os.Executable,
+			executableFn: execFn,
 			execCmdFn:    opts.execCmdFn,
 		}
 		if _, err := MCPInstall(ctx, mcpOpts); err != nil {
