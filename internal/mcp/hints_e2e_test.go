@@ -176,6 +176,72 @@ func TestHints_E2E_SlugQuery_OnlyOnZeroResult(t *testing.T) {
 	}
 }
 
+// TestHints_E2E_NoBrief24h_BothVerbsFire is the QUEST-137 regression test:
+// the no-brief-24h rule must fire on BOTH quest_fulfill (canonical) AND
+// quest_clear (backward-compat alias). Each sub-test spins up an isolated
+// server so the singleton engine's session state is fresh per run.
+func TestHints_E2E_NoBrief24h_BothVerbsFire(t *testing.T) {
+	longReport := "commit abc123, files: x.go y.go; follow-ups: run integration tests and verify deploy pipeline stays green"
+
+	for _, toolName := range []string{"quest_fulfill", "quest_clear"} {
+		toolName := toolName // capture range variable for sub-test closure
+		t.Run(toolName, func(t *testing.T) {
+			pid := isolateProject(t)
+			ctx := context.Background()
+
+			db, err := openQuestDB(ctx)
+			if err != nil {
+				t.Fatalf("open quest db: %v", err)
+			}
+			defer func() { _ = db.Close() }()
+
+			q, err := quest.Post(ctx, db, pid, quest.PostParams{Subject: "brief-regression-" + toolName})
+			if err != nil {
+				t.Fatalf("post: %v", err)
+			}
+
+			s, err := build()
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			_, client, cleanup := connectInMemory(t, s)
+			defer cleanup()
+
+			if _, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+				Name:      "guild_session_start",
+				Arguments: map[string]any{"project": pid},
+			}); err != nil {
+				t.Fatalf("bootstrap: %v", err)
+			}
+
+			// Use the tool under test — either quest_fulfill or quest_clear.
+			// A long report keeps clear-without-report-detail from winning the
+			// budget slot over no-brief-24h.
+			res, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+				Name: toolName,
+				Arguments: map[string]any{
+					"quest_id": q.ID,
+					"report":   longReport,
+					"project":  pid,
+				},
+			})
+			if err != nil {
+				t.Fatalf("%s: %v", toolName, err)
+			}
+			if res.IsError {
+				t.Fatalf("%s IsError=true: %s", toolName, textOf(res.Content))
+			}
+			body := textOf(res.Content)
+			if !strings.Contains(body, "no quest_brief yet") {
+				t.Errorf("%s: expected no-brief-24h hint in body; got:\n%s", toolName, body)
+			}
+			if !strings.Contains(body, "💡") {
+				t.Errorf("%s: expected 💡 emoji in body; got:\n%s", toolName, body)
+			}
+		})
+	}
+}
+
 // TestHints_E2E_ClearWithoutBrief fires no-brief-24h through a full MCP
 // round-trip — the canonical migration target of BriefHint.
 func TestHints_E2E_ClearWithoutBrief(t *testing.T) {

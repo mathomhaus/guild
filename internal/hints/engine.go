@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/quest"
 )
 
 // FollowThroughWindow is how many subsequent events the engine tracks
@@ -206,7 +208,11 @@ func (e *Engine) Evaluate(ctx context.Context, ev CallEvent) Fire {
 		if !cr.row.Enabled {
 			continue
 		}
-		if cr.row.TriggerTool != "*" && cr.row.TriggerTool != ev.Tool {
+		// Normalize both sides to canonical tool names before comparing so
+		// backward-compat aliases (e.g. quest_clear → quest_fulfill) trigger
+		// rules authored against the canonical name. See quest.CanonicalToolName.
+		if cr.row.TriggerTool != "*" &&
+			quest.CanonicalToolName(cr.row.TriggerTool) != quest.CanonicalToolName(ev.Tool) {
 			continue
 		}
 		if cr.rule.Trigger == nil || !cr.rule.Trigger(e.context, ev) {

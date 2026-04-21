@@ -79,10 +79,10 @@ func Definitions() []Rule {
 		},
 		{
 			ID:            "no-brief-24h",
-			TriggerTool:   "quest_clear",
+			TriggerTool:   "quest_fulfill",
 			Trigger:       triggerNoBrief24h,
 			FollowThrough: followQuestBrief,
-			Caveat:        "Era-aware severity: 💡 hint on MCP, ℹ️ fyi on Bash CLI (18.7pp gap in ENTRY-29 calibration).",
+			Caveat:        "Era-aware severity: 💡 hint on MCP, ℹ️ fyi on Bash CLI (18.7pp gap in ENTRY-29 calibration). TriggerTool is canonical quest_fulfill; quest_clear alias is handled by quest.CanonicalToolName in the engine.",
 		},
 
 		// ℹ️ fyi (demote) — 3 rules.
@@ -95,10 +95,10 @@ func Definitions() []Rule {
 		},
 		{
 			ID:            "clear-without-report-detail",
-			TriggerTool:   "quest_clear",
+			TriggerTool:   "quest_fulfill",
 			Trigger:       triggerClearWithoutReportDetail,
 			FollowThrough: followQuestUpdateOrJournal,
-			Caveat:        "Demoted to fyi; short reports are legitimate for trivial clears.",
+			Caveat:        "Demoted to fyi; short reports are legitimate for trivial clears. TriggerTool is canonical quest_fulfill; quest_clear alias is handled by quest.CanonicalToolName in the engine.",
 		},
 		{
 			ID:            "principle-too-long",
