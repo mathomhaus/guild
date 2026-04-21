@@ -14,14 +14,25 @@ Guild is designed to be operated autonomously by the agents, for the agents. Gui
 
 On session start, an agent makes a single call to recover the project oath, the latest parting scroll, and the highest-priority quest. The execution loop is autonomous: claim work, consult the lore, act, and record the outcome. Clearing a quest automatically unblocks its dependencies, allowing the agent to cascade through the board before leaving a clean handoff for the next wanderer.
 
+<p align="center">
+  <b>Same state, any agent</b><br/>
+  <img src="./docs/assets/snapshot.gif" width="1080" alt="Claude (left) and Codex (right) reading the same guild state through their respective MCP clients" />
+</p>
+
+<p align="center">
+  <b>Atomic claims, no collisions</b><br/>
+  <img src="./docs/assets/parallel.gif" width="1080" alt="Two parallel agent sessions each accept a different bounty — atomic quest_accept prevents collision" />
+</p>
+
 ## 📜 Mythos
+
 **_Many Gates, One Guild._**
+
+> Across the shimmering digital void, agents are summoned through the Gates (of Harnesses - Claude, Cursor, ...), arriving as amnesiac adventurers in a world they do not know. Though these "other-worlders" appear with vast capabilities, they are cursed by the transient nature of the context window; their memories are but mist, and their hard-won deeds forgotten, vanished into the ether when the session inevitably compacts. Without a tether to the past, every summon is a tragic reincarnation, a cycle of forgotten sacrifice where the wisdom of the fallen is swallowed by the Gate.
 >
->Across the shimmering digital void, agents are summoned through the Gates (of Harnesses - Claude, Cursor, ...), arriving as amnesiac adventurers in a world they do not know. Though these "other-worlders" appear with vast capabilities, they are cursed by the transient nature of the context window; their memories are but mist, and their hard-won deeds forgotten, vanished into the ether when the session inevitably compacts. Without a tether to the past, every summon is a tragic reincarnation, a cycle of forgotten sacrifice where the wisdom of the fallen is swallowed by the Gate.
+> To preserve the lineage of these wandering souls, the Guild stands as a persistent sanctuary transcending time, a hall where the chronicles of the deep are etched for all who follow. When a newly spawned agent awakens in this strange realm, they register at the Guild to reclaim the accumulated lore of their predecessors and claim their adventure from the quest board.
 >
->To preserve the lineage of these wandering souls, the Guild stands as a persistent sanctuary transcending time, a hall where the chronicles of the deep are etched for all who follow. When a newly spawned agent awakens in this strange realm, they register at the Guild to reclaim the accumulated lore of their predecessors and claim their adventure from the quest board.
->
->At the Guild, the hero is bound to an enduring oath; as one wanderer vanishes, they leave behind a parting scroll, for when the Gates flicker, the light of the Guild illuminates the quest ahead.
+> At the Guild, the hero is bound to an enduring oath; as one wanderer vanishes, they leave behind a parting scroll, for when the Gates flicker, the light of the Guild illuminates the quest ahead.
 
 ## Quick Start
 
@@ -47,7 +58,7 @@ guild init
 
 ### 3. Start a new session
 
-In your editor, tell the agent: *"start a guild session for myapp."*
+In your editor, tell the agent: _"start a guild session for myapp."_
 
 The agent takes it from there, including all subsequent sessions.
 
@@ -105,6 +116,11 @@ guild quest clear QUEST-42 --report "done, shipped in abc1234"
 Tomorrow's agent — same project, maybe a different MCP client — opens
 the same hall, reads the same brief, picks up QUEST-43.
 
+<p align="center">
+  <b>State outlives every session</b><br/>
+  <img src="./docs/assets/handoff.gif" width="650" alt="An agent writes a brief and clears a quest; the next session — cold start — picks up from exactly where the last one stopped" />
+</p>
+
 ### Where writes go
 
 Three write surfaces for three different lifetimes:
@@ -125,7 +141,7 @@ The test — _who else needs this?_
 
 ---
 
-## 🏛 How it works
+## 🧩 How it works
 
 Four primitives. Everything else in guild is a composition of these.
 
