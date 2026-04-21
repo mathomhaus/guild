@@ -1,0 +1,54 @@
+"area: lore":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/lore/**'
+      - 'internal/cli/lore*'
+
+"area: quest":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/quest/**'
+      - 'internal/cli/quest*'
+
+"area: cli":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/cli/**'
+      - 'cmd/guild/**'
+
+"area: mcp":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/mcp/**'
+
+"area: hints":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/hints/**'
+
+"area: install":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/install/**'
+      - 'scripts/install*'
+      - '.goreleaser.yml'
+      - 'Formula/**'
+
+"area: docs":
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'docs/**'
+      - 'README.md'
+      - '**/*.md'
+
+"area: ci":
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'
+      - 'Makefile'
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'go.mod'
+      - 'go.sum'
