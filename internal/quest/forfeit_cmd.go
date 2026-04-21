@@ -16,15 +16,16 @@ type ForfeitInput struct {
 }
 
 type ForfeitOutput struct {
-	Quest   *Quest `json:"quest"`
-	HasNote bool   `json:"has_note"`
+	Quest       *Quest `json:"quest"`
+	HasNote     bool   `json:"has_note"`
+	AlreadyNext bool   `json:"already_next,omitempty"`
 }
 
 var ForfeitCommand = &command.Command[ForfeitInput, ForfeitOutput]{
 	Name:    "quest_forfeit",
 	CLIPath: []string{"quest", "forfeit"},
 	Short:   "release a claim without completing",
-	Long:    "Release a claimed quest back to the queue. Use when blocked or ceding to another agent.",
+	Long:    "Release a claimed quest back to the queue. Use when blocked or ceding to another agent. Only acts on status=in_progress quests — refuses on done and no-ops on next.",
 	Args: []command.ArgSpec{
 		{
 			Name:     "quest_id",
@@ -61,11 +62,15 @@ var ForfeitCommand = &command.Command[ForfeitInput, ForfeitOutput]{
 		if err != nil {
 			return ForfeitOutput{}, err
 		}
-		q, err := Forfeit(ctx, db, pid, in.QuestID, in.Note)
+		res, err := Forfeit(ctx, db, pid, in.QuestID, in.Note)
 		if err != nil {
 			return ForfeitOutput{}, err
 		}
-		return ForfeitOutput{Quest: q, HasNote: strings.TrimSpace(in.Note) != ""}, nil
+		return ForfeitOutput{
+			Quest:       res.Quest,
+			HasNote:     !res.AlreadyNext && strings.TrimSpace(in.Note) != "",
+			AlreadyNext: res.AlreadyNext,
+		}, nil
 	},
 	CLIFormat:      func(s command.CLISink, o ForfeitOutput) string { return formatForfeited(s, o) },
 	MCPFormat:      func(s command.MCPSink, o ForfeitOutput) string { return formatForfeited(s, o) },
@@ -74,6 +79,10 @@ var ForfeitCommand = &command.Command[ForfeitInput, ForfeitOutput]{
 }
 
 func formatForfeited(s lineListSink, o ForfeitOutput) string {
+	if o.AlreadyNext {
+		msg := fmt.Sprintf("%s is already unclaimed — nothing to forfeit", o.Quest.ID)
+		return strings.TrimRight(s.Line("✅", "[ok]", msg), "\n")
+	}
 	tail := ""
 	if o.HasNote {
 		tail = " (note saved)"
@@ -83,6 +92,10 @@ func formatForfeited(s lineListSink, o ForfeitOutput) string {
 }
 
 func formatForfeitError(s lineListSink, err error) (string, bool) {
+	if errors.Is(err, ErrAlreadyDone) {
+		msg := fmt.Sprintf("quest_forfeit: %v — use quest post to rework, or reopen explicitly", err)
+		return strings.TrimRight(s.Line("❌", "[err]", msg), "\n"), true
+	}
 	if errors.Is(err, ErrNotFound) {
 		msg := fmt.Sprintf("quest_forfeit: %v", err)
 		return strings.TrimRight(s.Line("❌", "[err]", msg), "\n"), true

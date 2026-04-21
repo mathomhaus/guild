@@ -991,7 +991,7 @@ _no arguments_
 
 ## `quest_forfeit`
 
-Release a claimed quest back to the queue. Use when blocked or ceding to another agent.
+Release a claimed quest back to the queue. Use when blocked or ceding to another agent. Only acts on status=in_progress quests — refuses on done and no-ops on next.
 
 _no arguments_
 

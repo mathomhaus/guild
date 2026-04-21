@@ -9,16 +9,22 @@ import (
 	"time"
 )
 
-// Forfeit releases a claim on taskID without marking it done. Any notes
-// already attached persist for the next agent who accepts. Note can be
-// empty; when non-empty it is stored as "[released] <note>" so the
-// reason survives into subsequent scrolls.
+// Forfeit releases an in_progress claim on taskID without marking it
+// done. Any notes already attached persist for the next agent who
+// accepts. Note can be empty; when non-empty it is stored as
+// "[released] <note>" so the reason survives into subsequent scrolls.
 //
-// The status is forced back to 'next' even if the quest was never
-// accepted in the first place — this is a regression-to-clean-slate
-// primitive, not a state-machine guard. claimed_by / claimed_at clear
-// unconditionally.
-func Forfeit(ctx context.Context, db *sql.DB, projectID, taskID, note string) (*Quest, error) {
+// Status gating (QUEST-135):
+//   - status=in_progress → claim is released, event + optional note
+//     are emitted, status flips to 'next'. Current-day behavior.
+//   - status=next (or any non-in_progress, non-done status) → no-op.
+//     No DB writes. Returns ForfeitResult{AlreadyNext: true} so the
+//     CLI/MCP adapter can render a neutral "nothing to forfeit" line
+//     rather than the misleading ↩️ success glyph.
+//   - status=done → returns ErrAlreadyDone. Forfeit refuses to
+//     silently reopen a completed quest; the caller should use
+//     quest post (rework) to re-do the work explicitly.
+func Forfeit(ctx context.Context, db *sql.DB, projectID, taskID, note string) (*ForfeitResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("quest: forfeit: nil db")
 	}
@@ -49,6 +55,25 @@ func Forfeit(ctx context.Context, db *sql.DB, projectID, taskID, note string) (*
 		}
 		return nil, fmt.Errorf("quest: forfeit: probe existing: %w", err)
 	}
+
+	switch Status(existStatus.String) {
+	case StatusDone:
+		return nil, fmt.Errorf("%w: %s — use quest post to rework", ErrAlreadyDone, taskID)
+	case StatusInProgress:
+		// fall through to the release path below.
+	default:
+		// next / blocked / anything else → no-op. Load the quest for
+		// the return value but do not touch task_status / task_events.
+		q, err := loadTx(ctx, tx, projectID, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("quest: forfeit: commit: %w", err)
+		}
+		return &ForfeitResult{Quest: q, AlreadyNext: true}, nil
+	}
+
 	owner := existOwner.String
 	if owner == "" {
 		owner = "agent"
@@ -89,5 +114,5 @@ func Forfeit(ctx context.Context, db *sql.DB, projectID, taskID, note string) (*
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("quest: forfeit: commit: %w", err)
 	}
-	return result, nil
+	return &ForfeitResult{Quest: result}, nil
 }

@@ -79,6 +79,11 @@ var (
 	// append and replace form of the same list field (e.g. Files AND
 	// ReplaceFiles).
 	ErrConflictingUpdate = errors.New("conflicting update: cannot set both append and replace for the same field")
+
+	// ErrAlreadyDone is returned by Forfeit when the target quest is
+	// status='done'. Forfeit refuses to silently reopen a completed
+	// quest — the caller should explicitly rework or reopen.
+	ErrAlreadyDone = errors.New("quest already done")
 )
 
 // AlreadyClaimedError carries who currently holds the quest so the CLI
@@ -181,6 +186,16 @@ func (p *UpdateParams) Empty() bool {
 type ClearResult struct {
 	Cleared   *Quest
 	Unblocked []*Quest
+}
+
+// ForfeitResult is returned by Forfeit. Quest is the target quest's
+// current state. AlreadyNext is true when Forfeit was a no-op because
+// the quest was not in_progress — no DB writes happened, no release
+// event was emitted, and the caller should render a neutral message
+// rather than the ↩️ success line.
+type ForfeitResult struct {
+	Quest       *Quest
+	AlreadyNext bool
 }
 
 // PriorityOrder returns a sort rank for p. Lower is higher priority:

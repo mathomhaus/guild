@@ -840,7 +840,7 @@ release a claim without completing
 guild quest forfeit QUEST_ID [flags]
 ```
 
-Release a claimed quest back to the queue. Use when blocked or ceding to another agent.
+Release a claimed quest back to the queue. Use when blocked or ceding to another agent. Only acts on status=in_progress quests — refuses on done and no-ops on next.
 
 **Flags**
 
