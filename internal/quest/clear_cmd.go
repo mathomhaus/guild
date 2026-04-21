@@ -27,6 +27,13 @@ type FulfillOutput struct {
 type ClearInput = FulfillInput
 type ClearOutput = FulfillOutput
 
+// clearDeprecationNotice is the one-line migration gradient emitted
+// whenever an agent or user invokes the legacy quest_clear / quest clear
+// alias. Positioned after the success line so it doesn't crowd the main
+// output. JSON mode is never affected (CLI path exits before this renders;
+// MCP format appends it outside the JSON schema). QUEST-138 / LORE-122.
+const clearDeprecationNotice = "⚠️ [deprecated] quest_clear will be removed — use quest_fulfill"
+
 // FulfillCommand is the primary quest-completion verb. `quest clear` stays
 // as a cobra alias for muscle-memory; `quest_fulfill` is the canonical MCP
 // tool name. QUEST-106 / LORE-80.
@@ -109,6 +116,12 @@ var FulfillCommand = &command.Command[FulfillInput, FulfillOutput]{
 	MCPFormat:      func(s command.MCPSink, o FulfillOutput) string { return formatFulfilled(s, o) },
 	CLIErrorFormat: func(s command.CLISink, err error) (string, bool) { return formatFulfillError(s, err) },
 	MCPErrorFormat: func(s command.MCPSink, err error) (string, bool) { return formatFulfillError(s, err) },
+	// Emit the deprecation notice to stderr when invoked as the `clear`
+	// alias so agents and users get a migration gradient. JSON mode is
+	// unaffected — the cobra adapter exits before reaching this path.
+	CLIAliasDeprecations: map[string]string{
+		"clear": clearDeprecationNotice,
+	},
 }
 
 // ClearCommand is the backward-compat MCP alias for FulfillCommand. It
@@ -123,6 +136,12 @@ var ClearCommand = func() *command.Command[FulfillInput, FulfillOutput] {
 	c.MCPOnly = true
 	c.CLIAliases = nil // avoid cobra registering an orphan alias
 	c.Short = "fulfill a quest (alias for quest_fulfill; cascades unblock)"
+	// Override MCPFormat to append the deprecation notice after the success
+	// line. This gives agents a clear pointer to the canonical verb without
+	// polluting the primary quest_fulfill output. QUEST-138 / LORE-122.
+	c.MCPFormat = func(s command.MCPSink, o FulfillOutput) string {
+		return formatFulfilled(s, o) + "\n" + clearDeprecationNotice
+	}
 	return &c
 }()
 

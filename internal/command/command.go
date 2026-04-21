@@ -55,6 +55,11 @@ type Command[I, O any] struct {
 	// the command still exits 0. MCP callers never invoke this; they
 	// encode warnings inside their structured MCPFormat output instead.
 	CLIWarnings func(s CLISink, o O) string
+	// CLIAliasDeprecations maps a cobra alias name to a deprecation notice
+	// that should be written to stderr when the command is invoked via that
+	// alias. The notice is emitted after CLIWarnings, only in human-rendering
+	// mode (not --json), so scripted consumers see no output change.
+	CLIAliasDeprecations map[string]string
 	// MCPFormat renders the handler's output for the MCP surface.
 	// Receives a concrete MCPSink with compact-output primitives.
 	// Required unless CLIOnly=true.

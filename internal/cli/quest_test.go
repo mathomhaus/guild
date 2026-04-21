@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -195,6 +196,83 @@ func TestCLI_QuestEpic(t *testing.T) {
 			t.Errorf("epic stdout missing %q:\n%s", want, stdout)
 		}
 	}
+}
+
+// TestCLI_QuestClearDeprecationStderr verifies that invoking `quest clear`
+// (cobra alias for quest fulfill) writes the deprecation notice to stderr and
+// not to stdout, and that --json mode suppresses it entirely. QUEST-138.
+func TestCLI_QuestClearDeprecationStderr(t *testing.T) {
+	setupQuestCLI(t, "guild-cli-depr")
+	const proj = "guild-cli-depr"
+
+	// Post a quest to fulfill.
+	if _, _, err := runQuest(t, []string{"quest", "post", "-p", proj, "depr-test"}); err != nil {
+		t.Fatalf("post: %v", err)
+	}
+
+	t.Run("human_mode_notice_on_stderr_not_stdout", func(t *testing.T) {
+		stdout, stderr, err := runQuest(t, []string{"quest", "clear",
+			"-p", proj, "QUEST-1", "--report", "done"})
+		if err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		// Success line must be on stdout.
+		if !strings.Contains(stdout, "fulfilled QUEST-1") {
+			t.Errorf("stdout missing success line; got: %q", stdout)
+		}
+		// Deprecation notice must be on stderr.
+		if !strings.Contains(stderr, "deprecated") {
+			t.Errorf("stderr missing deprecation notice; got: %q", stderr)
+		}
+		if !strings.Contains(stderr, "quest_fulfill") {
+			t.Errorf("stderr missing 'quest_fulfill' pointer; got: %q", stderr)
+		}
+		// Deprecation notice must NOT appear on stdout.
+		if strings.Contains(stdout, "deprecated") {
+			t.Errorf("deprecation notice leaked to stdout; got: %q", stdout)
+		}
+	})
+
+	// Post another quest for the json-mode test.
+	if _, _, err := runQuest(t, []string{"quest", "post", "-p", proj, "depr-json-test"}); err != nil {
+		t.Fatalf("post 2: %v", err)
+	}
+
+	t.Run("json_mode_no_deprecation_notice", func(t *testing.T) {
+		stdout, stderr, err := runQuest(t, []string{"quest", "clear",
+			"-p", proj, "QUEST-2", "--report", "done", "--json"})
+		if err != nil {
+			t.Fatalf("clear --json: %v", err)
+		}
+		// stdout must be valid JSON without any deprecation content.
+		if strings.Contains(stdout, "deprecated") {
+			t.Errorf("deprecation notice leaked into JSON stdout; got: %q", stdout)
+		}
+		// stderr must be empty in --json mode.
+		if strings.Contains(stderr, "deprecated") {
+			t.Errorf("deprecation notice leaked into stderr in --json mode; got: %q", stderr)
+		}
+		// Sanity: stdout is parseable JSON.
+		var out map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &out); err != nil {
+			t.Errorf("stdout is not valid JSON: %v\nstdout: %q", err, stdout)
+		}
+	})
+
+	// Verify quest fulfill (primary verb) does NOT emit the notice.
+	if _, _, err := runQuest(t, []string{"quest", "post", "-p", proj, "fulfill-clean"}); err != nil {
+		t.Fatalf("post 3: %v", err)
+	}
+	t.Run("fulfill_no_deprecation_notice", func(t *testing.T) {
+		_, stderr, err := runQuest(t, []string{"quest", "fulfill",
+			"-p", proj, "QUEST-3", "--report", "done"})
+		if err != nil {
+			t.Fatalf("fulfill: %v", err)
+		}
+		if strings.Contains(stderr, "deprecated") {
+			t.Errorf("deprecation notice fired on quest fulfill (primary verb); stderr: %q", stderr)
+		}
+	})
 }
 
 // readStatusOwner reads the (status, claimed_by) pair for (pid, tid).

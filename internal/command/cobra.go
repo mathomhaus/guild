@@ -106,6 +106,9 @@ func (c *Command[I, O]) cobraRunE(d Deps) func(*cobra.Command, []string) error {
 				_, _ = fmt.Fprint(cc.ErrOrStderr(), w)
 			}
 		}
+		if notice, ok := c.CLIAliasDeprecations[cc.CalledAs()]; ok && notice != "" {
+			_, _ = fmt.Fprintln(cc.ErrOrStderr(), notice)
+		}
 		return nil
 	}
 }
