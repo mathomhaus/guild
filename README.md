@@ -62,7 +62,7 @@ In your editor, tell the agent: _"start a guild session for myapp."_
 
 The agent takes it from there, including all subsequent sessions.
 
-See a few [`examples/`](./examples/) of what guild can do. Five scenarios, each under 5 minutes.
+See a few [`examples/`](./examples/) of what guild can do. All small scenarios, each under 5 minutes.
 
 ## ⚔️ A full session
 
