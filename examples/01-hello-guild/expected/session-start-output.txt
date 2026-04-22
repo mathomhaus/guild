@@ -1,0 +1,9 @@
+⚔️ 1 oath(s) sworn:
+  No em dashes in generated text — Use hyphens or rephrase. Em-dashes read as AI-generated and are actively distracting in docs, code comments, and CLI output. Prefer the plain hyphen or rewrite the sentence.
+
+QUEST-1 [P2]
+  Audit existing docs for em-dash violations
+  ✓ Scan docs/ for em-dashes
+  ✓ Replace each with hyphens or rephrase
+
+→  quest accept QUEST-1

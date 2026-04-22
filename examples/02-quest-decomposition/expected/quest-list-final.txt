@@ -1,0 +1,7 @@
+ID        Priority  Subject                                                       Campaign  Status  Owner  
+--------  --------  ------------------------------------------------------------  --------  ------  -----  
+QUEST-11  P2        Plan a rate limiter                                                     done    agent  
+QUEST-12  P2        Recommend ONE rate-limiting algorithm, one-sentence rational            done    agent  
+QUEST-13  P2        Recommend ONE storage backend for counters, one-sentence rat            done    agent  
+QUEST-14  P2        List 3 pitfalls to avoid, one line each                                 done    agent  
+QUEST-15  P2        Recommend ONE observability signal to emit, one-sentence rat            done    agent  

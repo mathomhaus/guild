@@ -1,0 +1,4 @@
+📋 Last briefing [2026-04-22T16:55] by agent:
+  Renamed User.email → User.primaryEmail in models/ (models/user.go, models/account.go); updated 4 call sites in handlers/. Next: continue through services/ — services/billing.go and services/auth.go both reference the old field name. Gotcha: test fixtures at fixtures/users_test.go still use email — update those before running the services/ tests or you will see false failures.
+
+✅ no unclaimed tasks — all done, blocked, or in progress

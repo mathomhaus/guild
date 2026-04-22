@@ -1,0 +1,4 @@
+$ guild lore list --project guild-example-03-project-b
+
+📜 1 entry(ies):
+  LORE-211 [decision · current]  Adopt exponential backoff for this service

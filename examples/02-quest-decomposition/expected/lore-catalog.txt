@@ -1,0 +1,5 @@
+  LORE-248 [decision · current]  Rate limiter design: token bucket on Redis, keyed by identity, reject-counter signal
+  LORE-246 [decision · current]  Rate limiter signal: rate_limit_rejected_total{route,identity}
+  LORE-245 [decision · current]  Rate limiter storage: Redis
+  LORE-244 [decision · current]  Rate limiter algorithm: token bucket
+  LORE-247 [research · current]  Rate limiter: 3 pitfalls

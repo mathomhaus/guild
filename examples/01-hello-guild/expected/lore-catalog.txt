@@ -1,0 +1,2 @@
+📜 1 entry(ies):
+  LORE-222 [principle · current]  No em dashes in generated text

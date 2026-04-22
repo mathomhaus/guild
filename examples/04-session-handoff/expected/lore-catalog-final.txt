@@ -1,0 +1,3 @@
+📜 2 entry(ies):
+  LORE-213 [observation · current]  services/ rename complete — fixtures pending
+  LORE-212 [observation · current]  Primary-field convention

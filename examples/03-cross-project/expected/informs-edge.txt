@@ -1,0 +1,20 @@
+$ guild lore study 211  # study project B's new entry
+
+============================================================
+  LORE-211  ✅ [CURRENT]
+============================================================
+  Kind     : decision
+  Topic    : networking
+  Title    : Adopt exponential backoff for this service
+  Age      : 0 days
+  Valid    : 180d (180d remaining)
+
+  SUMMARY
+  ----------------------------------------
+  Following same policy as guild-example-03-project-a (LORE-210) — 100ms base, max 3 retries. Adopted after appraise surfaced prior art across projects.
+
+  LINKED ENTRIES
+  ----------------------------------------
+  ← LORE-210 [informs] Exponential backoff retry policy (decision, current)
+
+  top link: ← LORE-210 [informs] Exponential backoff retry policy

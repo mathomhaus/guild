@@ -1,0 +1,13 @@
+🔍 3 result(s) for "ci":
+
+  LORE-N [observation · current]  CI install overhead
+    CI takes 7 min total; 60% is npm install without cache.
+    topic: ci
+
+  LORE-N [decision · current]  Add npm ci cache
+    Cache node_modules keyed on package-lock.json hash -- expect ~3 min CI saving.
+    topic: ci
+
+  LORE-N [idea · current]  Migrate to bun
+    Longer-term: evaluate bun for install speed. Not urgent; would deprecate npm ci cache.
+    topic: ci

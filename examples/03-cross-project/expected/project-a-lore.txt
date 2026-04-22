@@ -1,0 +1,4 @@
+$ guild lore list --project guild-example-03-project-a
+
+📜 1 entry(ies):
+  LORE-210 [decision · current]  Exponential backoff retry policy

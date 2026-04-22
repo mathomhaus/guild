@@ -1,0 +1,4 @@
+📜 3 entry(ies):
+  LORE-N [observation · current]  CI install overhead
+  LORE-N [decision · current]  Add npm ci cache
+  LORE-N [idea · current]  Migrate to bun
