@@ -109,6 +109,8 @@ A principle is a kind of lore entry (kind=principle). The oath is the rendered l
 
 **Lore summaries DISTILL the durable choice.** Implementation detail goes in the quest acceptance that prompted the inscription — not in the lore summary. A decision entry answers "what was decided and why" in 3–5 sentences; the acceptance bullets of the quest that triggered it carry the how.
 
+**Transfer reasoning lives in the lore summary; plan docs and PRs carry implementation detail.** When a new entry cites an ancestor via `informs`, the summary must name the transfer in 1–3 sentences — why the ancestor applies HERE (delta, inversion, adoption, or triviality). Plan docs, PR descriptions, and code comments carry deeper context, examples, and implementation detail. Trivial transfers (same tool, same philosophy, no delta) get brief cites, but the brief cite still names the triviality in one clause. A bare "adopts LORE-N, same rationale applies" with no articulation of why it transfers is a rubber-stamp, not a cite — the lore body must stand alone as audit-readable reasoning.
+
 ## Task-shaped examples — situation → call
 
 Learn the tool by when to reach for it.
