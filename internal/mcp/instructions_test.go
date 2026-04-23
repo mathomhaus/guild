@@ -23,10 +23,13 @@ import (
 // direct edits to instructions.md do. See QUEST-57 for the dynamic
 // build path and its separate tests.
 //
-// Last updated for QUEST-172: add "Transfer reasoning lives in the lore
-// summary; plan docs and PRs carry implementation detail" paragraph to
-// encode the canonical reasoning-surface convention (Option C).
-const wantStaticSHA = "e83b5cc21b5a2e2a0ac5c5a0ba88ad470e9bd73733b48457ab0a8c174e22cbf1"
+// Last updated for QUEST-172 follow-up: universalize the reasoning-surface
+// paragraph so the MCP contract isn't locked to software-engineering
+// vocabulary — "project artifacts" as the collective term, with
+// non-exhaustive examples (plan docs, PR descriptions, chapter drafts,
+// research notes, spec outlines) so guild's project-type-agnostic posture
+// holds for writers, researchers, PMs, etc.
+const wantStaticSHA = "fb0aa8f2b1434382b441bffb5c4e4666f79494404fce62762df42601fd5170b6"
 
 func TestStaticInstructions_Embedded(t *testing.T) {
 	if staticInstructions == "" {
