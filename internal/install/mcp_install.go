@@ -85,6 +85,11 @@ type MCPInstallResult struct {
 	NotDetected []string
 	// Ran is the list of client names that were executed via --run.
 	Ran []string
+	// SkippedMissingCLI is the list of client names that were detected
+	// via a config-file probe but whose CLI binary was not on PATH at
+	// --run time. Attempting to exec them would fail, so we skip the
+	// install step and leave the user to install the CLI first.
+	SkippedMissingCLI []string
 }
 
 // MCPInstall detects MCP clients, prints the recommended install commands,
@@ -207,6 +212,24 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 		}
 
 		for _, instr := range instructions {
+			// Argv is pre-split; never re-parse Cmd with strings.Fields,
+			// which would shred binary paths that contain spaces.
+			if len(instr.Argv) == 0 {
+				continue
+			}
+
+			// A client can pass Detected() via its config-file probe even
+			// when the CLI we're about to exec isn't on PATH. Running the
+			// install would then fail with an opaque "exec: <name>: not
+			// found" error. Short-circuit with a one-line notice so the
+			// user knows which CLI to install (issue #48).
+			binaryName := instr.Argv[0]
+			if _, err := exec.LookPath(binaryName); err != nil {
+				fmt.Fprintf(opts.Out, "skipping %s: %s not on PATH\n", instr.Name, binaryName)
+				result.SkippedMissingCLI = append(result.SkippedMissingCLI, instr.Name)
+				continue
+			}
+
 			if !opts.Yes {
 				fmt.Fprintf(opts.Out, "Run: %s  [y/N] ", instr.Cmd)
 				scanner := bufio.NewScanner(opts.In)
@@ -218,11 +241,6 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 				}
 			}
 
-			// Argv is pre-split; never re-parse Cmd with strings.Fields,
-			// which would shred binary paths that contain spaces.
-			if len(instr.Argv) == 0 {
-				continue
-			}
 			//nolint:gosec // argv is composed from Clients[].InstallArgv + our own binPath
 			cmd := opts.execCmdFn(instr.Argv[0], instr.Argv[1:]...)
 			cmd.Stdout = opts.Out
