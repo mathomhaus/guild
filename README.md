@@ -64,6 +64,86 @@ The agent takes it from there, including all subsequent sessions.
 
 See a few [`examples/`](./examples/) of what guild can do. All small scenarios, each under 5 minutes.
 
+## Your first 10 minutes with guild
+
+You have just run `guild init`. Here is what to do next.
+
+**What is "lore"?** Lore is guild's persistent knowledge archive. Entries
+are typed by kind: `principle` (a behavioral rule), `research` (findings),
+`decision` (a choice and its rationale), `observation` (something noticed),
+or `idea` (a seed thought). Lore entries outlive sessions and are searchable.
+
+**What is "the oath"?** The oath is the subset of lore where `kind=principle`.
+Every `guild_session_start` call automatically loads all current principles
+for the active project and delivers them to the agent. The agent starts bound
+by those principles without any additional prompting. You write them once;
+they fire every session.
+
+**What is an MCP tool?** MCP (Model Context Protocol) is the standard
+protocol most AI coding tools use to expose server-side capabilities. Guild
+ships as an MCP server, so tools like `lore_inscribe` and `quest_post` are
+callable directly from your agent without any additional setup after
+`guild init` runs.
+
+### Step 1: Seed a principle
+
+Open your project in your MCP-enabled editor and tell the agent:
+
+> "Inscribe a principle: in this codebase, prefer table-driven tests in Go.
+> Use kind=principle, topic=testing."
+
+The agent will call `lore_inscribe`. You will see a confirmation like:
+
+```
+📜 inscribed LORE-1: prefer table-driven tests in Go [principle]
+```
+
+That is the oath growing. The next session, the agent starts knowing this
+convention.
+
+### Step 2: File a task
+
+Tell the agent:
+
+> "Post a quest: audit existing test files for non-table-driven tests."
+
+The agent calls `quest_post`. You will see:
+
+```
+➕ posted QUEST-1: audit existing test files for non-table-driven tests
+```
+
+### Step 3: Start a new session
+
+Close the chat. Reopen it. Tell the agent: "start a guild session."
+
+The agent calls `guild_session_start`. The response will show:
+
+```
+⚔️ 1 oath(s) sworn:
+  prefer table-driven tests in Go — ...
+
+🎯 top bounty:
+  QUEST-1 [P2] audit existing test files for non-table-driven tests
+```
+
+The principle auto-loaded. The quest surfaced. You typed nothing.
+
+### Ready to go further?
+
+Two patterns that compound guild's value quickly, once principles and tasks
+are flowing:
+
+- **[Seeding principles](./examples/seeding-principles.md)**: five concrete
+  principle shapes (code-style, domain convention, workflow, never-do rule,
+  tool preference) with before/after narratives.
+- **[Docs to lore](./examples/docs-to-lore.md)**: turning an existing docs
+  directory into a queryable corpus. Includes an honest explanation of how
+  retrieval works (BM25 keyword search, not semantic embeddings) and the
+  failure modes to avoid.
+
+---
+
 ## ⚔️ A full session
 
 The three-act flow an agent runs on its own every time it wakes.
