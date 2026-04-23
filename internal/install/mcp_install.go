@@ -77,9 +77,10 @@ type MCPInstallOptions struct {
 
 // ClientInstruction is the computed install command for one detected client.
 type ClientInstruction struct {
-	Name string
-	Cmd  string   // shell-safe display string for printing / confirmation prompts
-	Argv []string // structured argv for exec; never re-parsed from Cmd
+	Name     string
+	Cmd      string   // shell-safe display string for printing / confirmation prompts
+	Argv     []string // structured argv for exec; never re-parsed from Cmd
+	ListArgv []string // argv that lists registered MCP servers; nil = unsupported
 }
 
 // MCPInstallResult reports what was done / printed.
@@ -95,6 +96,9 @@ type MCPInstallResult struct {
 	// --run time. Attempting to exec them would fail, so we skip the
 	// install step and leave the user to install the CLI first.
 	SkippedMissingCLI []string
+	// AlreadyRegistered is the list of client names that were skipped in
+	// --run mode because guild was already present in their MCP config.
+	AlreadyRegistered []string
 }
 
 // MCPInstall detects MCP clients, prints the recommended install commands,
@@ -189,11 +193,15 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 	// Build instruction list. Argv is canonical; Cmd is derived for display only.
 	var instructions []ClientInstruction
 	for _, c := range detected {
-		instructions = append(instructions, ClientInstruction{
+		instr := ClientInstruction{
 			Name: c.Name,
 			Argv: c.InstallArgv(binPath),
 			Cmd:  c.InstallCmdDisplay(binPath),
-		})
+		}
+		if c.ListArgv != nil {
+			instr.ListArgv = c.ListArgv()
+		}
+		instructions = append(instructions, instr)
 	}
 	result.Instructions = instructions
 
@@ -235,6 +243,17 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 			if _, err := opts.lookPathFn(binaryName); err != nil {
 				fmt.Fprintf(opts.Out, "skipping %s: %s not on PATH\n", instr.Name, binaryName)
 				result.SkippedMissingCLI = append(result.SkippedMissingCLI, instr.Name)
+				continue
+			}
+
+			// Skip clients that already have guild registered with the
+			// same path. A failed probe (non-zero exit, unexpected
+			// output, missing ListArgv) falls through to the install
+			// attempt — preserving the old behaviour rather than
+			// silently refusing to register (#27).
+			if isGuildRegistered(opts.execCmdFn, instr.ListArgv) {
+				fmt.Fprintf(opts.Out, "[✓] guild MCP already registered in %s — skipping\n", instr.Name)
+				result.AlreadyRegistered = append(result.AlreadyRegistered, instr.Name)
 				continue
 			}
 
@@ -388,6 +407,47 @@ func goBinCandidates() []string {
 		candidates = append(candidates, filepath.Join(home, "go", "bin", "guild"))
 	}
 	return candidates
+}
+
+// isGuildRegistered reports whether the client's list-MCP command shows a
+// guild entry. A nil listArgv, an exec error, or an unreadable stdout all
+// fall through to "not registered" so the caller proceeds with the normal
+// install attempt — i.e. the probe is best-effort, not authoritative.
+func isGuildRegistered(execCmdFn func(string, ...string) *exec.Cmd, listArgv []string) bool {
+	if len(listArgv) == 0 || execCmdFn == nil {
+		return false
+	}
+	//nolint:gosec // listArgv comes from Clients[].ListArgv, not user input.
+	cmd := execCmdFn(listArgv[0], listArgv[1:]...)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return scanForGuildEntry(out)
+}
+
+// scanForGuildEntry returns true if stdout contains a line identifying
+// "guild" as a registered MCP server. The recognised shapes cover the
+// CLI outputs of Claude Code, Cursor, and Codex — "guild:" (Claude / Codex
+// human formats), a bare "guild" token, or a "- guild" list entry. The
+// match is anchored at line start (after trimming leading whitespace and
+// list markers) so a stray occurrence inside a command value doesn't
+// produce a false positive.
+func scanForGuildEntry(out []byte) bool {
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		line = strings.TrimPrefix(line, "- ")
+		line = strings.TrimPrefix(line, "* ")
+		if line == "" {
+			continue
+		}
+		// Accept "guild", "guild:", "guild ", "guild\t" at line start.
+		if line == "guild" || strings.HasPrefix(line, "guild:") ||
+			strings.HasPrefix(line, "guild ") || strings.HasPrefix(line, "guild\t") {
+			return true
+		}
+	}
+	return false
 }
 
 // isInteractive reports whether r is a real terminal (stdin TTY).

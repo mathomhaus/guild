@@ -548,3 +548,144 @@ func TestMCPInstall_Run_SkipsWhenCLIMissing(t *testing.T) {
 		t.Errorf("expected missing-CLI notice; got:\n%s", buf.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// --run: pre-check skips clients that already have guild registered (#27)
+// ---------------------------------------------------------------------------
+
+// TestMCPInstall_Run_SkipsAlreadyRegistered verifies that when the
+// client's ListArgv reports an existing guild entry, MCPInstall does
+// NOT invoke the install command a second time and instead prints the
+// skip notice — the behaviour fixed by issue #27.
+func TestMCPInstall_Run_SkipsAlreadyRegistered(t *testing.T) {
+	var installCalls, listCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				listCalls++
+				return exec.Command("printf", "guild: "+fakeBin+" mcp serve\n")
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+
+	if listCalls != 1 {
+		t.Errorf("list probe ran %d times, want 1", listCalls)
+	}
+	if installCalls != 0 {
+		t.Errorf("install ran %d times, want 0 (already registered)", installCalls)
+	}
+	if got := len(result.AlreadyRegistered); got != 1 {
+		t.Errorf("AlreadyRegistered len = %d, want 1", got)
+	}
+	if len(result.Ran) != 0 {
+		t.Errorf("Ran = %v, want empty", result.Ran)
+	}
+	if !strings.Contains(buf.String(), "already registered in Claude Code") {
+		t.Errorf("output missing skip notice:\n%s", buf.String())
+	}
+}
+
+// TestMCPInstall_Run_RegistersWhenAbsent verifies the pre-check does
+// NOT suppress installation when the list output doesn't contain a
+// guild entry — the first-run path must remain unchanged.
+func TestMCPInstall_Run_RegistersWhenAbsent(t *testing.T) {
+	var installCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				return exec.Command("printf", "other-server: /tmp/other\n")
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+	if installCalls != 1 {
+		t.Errorf("install ran %d times, want 1", installCalls)
+	}
+	if len(result.Ran) != 1 {
+		t.Errorf("Ran = %v, want one entry", result.Ran)
+	}
+	if len(result.AlreadyRegistered) != 0 {
+		t.Errorf("AlreadyRegistered = %v, want empty", result.AlreadyRegistered)
+	}
+}
+
+// TestScanForGuildEntry verifies the line-shape matcher used by the
+// pre-check. It accepts the common CLI output formats and rejects
+// incidental mentions of "guild" inside command-value strings.
+func TestScanForGuildEntry(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"claude human", "guild: /usr/local/bin/guild mcp serve\n", true},
+		{"list marker", "- guild\n- other\n", true},
+		{"bare token", "guild\n", true},
+		{"mixed list", "  * other\n  * guild: /bin/guild\n", true},
+		{"empty", "", false},
+		{"only other", "other: /bin/other mcp serve\n", false},
+		{"mention inside value only", "other: /path/to/guild-wrapper mcp serve\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, _ := scanForGuildEntry([]byte(tc.in)); got != tc.want {
+				t.Errorf("scanForGuildEntry(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
