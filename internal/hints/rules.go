@@ -39,6 +39,12 @@ type Rule struct {
 //
 // Rule order here is not semantically meaningful: the Engine keys on
 // Rule.ID after loading DB metadata via Store.LoadRules.
+//
+// Rule TriggerTool values are matched against ev.Tool after both sides
+// pass through quest.CanonicalToolName, so rules authored against the
+// canonical name (e.g. quest_fulfill) also match backward-compat aliases
+// (e.g. quest_clear). Add new aliases in internal/quest/aliases.go; the
+// normalization call site lives in Engine.Evaluate (engine.go).
 func Definitions() []Rule {
 	return []Rule{
 		// 💡 hint (keep) — 6 rules.
@@ -82,7 +88,7 @@ func Definitions() []Rule {
 			TriggerTool:   "quest_fulfill",
 			Trigger:       triggerNoBrief24h,
 			FollowThrough: followQuestBrief,
-			Caveat:        "Era-aware severity: 💡 hint on MCP, ℹ️ fyi on Bash CLI (18.7pp gap in ENTRY-29 calibration). TriggerTool is canonical quest_fulfill; quest_clear alias is handled by quest.CanonicalToolName in the engine.",
+			Caveat:        "Era-aware severity: 💡 hint on MCP, ℹ️ fyi on Bash CLI (18.7pp gap in ENTRY-29 calibration).",
 		},
 
 		// ℹ️ fyi (demote) — 3 rules.
@@ -98,7 +104,7 @@ func Definitions() []Rule {
 			TriggerTool:   "quest_fulfill",
 			Trigger:       triggerClearWithoutReportDetail,
 			FollowThrough: followQuestUpdateOrJournal,
-			Caveat:        "Demoted to fyi; short reports are legitimate for trivial clears. TriggerTool is canonical quest_fulfill; quest_clear alias is handled by quest.CanonicalToolName in the engine.",
+			Caveat:        "Demoted to fyi; short reports are legitimate for trivial clears.",
 		},
 		{
 			ID:            "principle-too-long",
