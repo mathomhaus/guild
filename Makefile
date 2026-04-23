@@ -103,6 +103,10 @@ test-short: ## Run tests with -short (skips slow fixtures)
 test-integration: build sqlcheck ## Run end-to-end integration tests (builds guild + sqlcheck first)
 	$(GO) test -race -count=1 ./tests/integration/...
 
+.PHONY: test-concurrency
+test-concurrency: ## Run the multi-agent concurrency stress suite (-race) — QUEST-179
+	$(GO) test -race -count=1 -v ./internal/test/concurrency/...
+
 .PHONY: cover
 cover: ## Generate coverage profile → coverage.out
 	$(GO) test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
