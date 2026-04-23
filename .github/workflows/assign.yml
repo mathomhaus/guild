@@ -1,0 +1,95 @@
+name: Assign Bot
+
+# Lets external contributors self-assign to issues via `/assign` comments
+# and release them via `/unassign`. Scoped to issues labeled `good first
+# issue` or `help wanted`; caps at 2 assignees per issue. GITHUB_TOKEN
+# with `issues: write` is sufficient — no PAT.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  assign:
+    name: handle /assign and /unassign
+    runs-on: ubuntu-latest
+    # Skip PR comments — issue_comment fires for both issues and PRs, and
+    # `issue.pull_request` is present only on PR comments.
+    if: >-
+      !github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/assign') ||
+       startsWith(github.event.comment.body, '/unassign'))
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = context.payload.comment.body || '';
+            const firstLine = body.split(/\r?\n/)[0].trim();
+
+            // Exact, case-sensitive match on the first line. Anything else
+            // (e.g. `/assign me`, `/ASSIGN`, quoted mentions) is a no-op.
+            let command;
+            if (firstLine === '/assign') {
+              command = 'assign';
+            } else if (firstLine === '/unassign') {
+              command = 'unassign';
+            } else {
+              core.info(`no-op: first line "${firstLine}" is not an exact /assign or /unassign`);
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const user = context.payload.comment.user.login;
+            const labels = (context.payload.issue.labels || []).map(l => l.name);
+
+            const ALLOWED_LABELS = ['good first issue', 'help wanted'];
+            const MAX_ASSIGNEES = 2;
+
+            const hasGatingLabel = labels.some(n => ALLOWED_LABELS.includes(n));
+            if (!hasGatingLabel) {
+              core.info(`no-op: issue #${issue_number} is not labeled ${ALLOWED_LABELS.join(' or ')}`);
+              return;
+            }
+
+            const reply = async (body) => {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            };
+
+            try {
+              if (command === 'assign') {
+                const current = (context.payload.issue.assignees || []).map(a => a.login);
+                if (current.includes(user)) {
+                  await reply(`@${user} you are already assigned to this issue.`);
+                  return;
+                }
+                if (current.length >= MAX_ASSIGNEES) {
+                  await reply(
+                    `Sorry @${user}, this issue already has ${current.length} assignees ` +
+                    `(cap is ${MAX_ASSIGNEES}). Please wait for one to free up or pick another issue.`
+                  );
+                  return;
+                }
+                await github.rest.issues.addAssignees({
+                  owner, repo, issue_number, assignees: [user],
+                });
+                await reply(`Assigned to @${user}. Thanks for picking this up!`);
+              } else {
+                await github.rest.issues.removeAssignees({
+                  owner, repo, issue_number, assignees: [user],
+                });
+                await reply(`Released by @${user}. The issue is open for others.`);
+              }
+            } catch (err) {
+              core.warning(`assign-bot failed: ${err.message}`);
+              await reply(
+                `Sorry @${user}, the assign bot hit an error: \`${err.message}\`. ` +
+                `A maintainer can assign manually.`
+              );
+            }
