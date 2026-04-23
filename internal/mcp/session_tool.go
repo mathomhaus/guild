@@ -50,9 +50,10 @@ type sessionStartInput struct {
 // INSTRUCTIONS, loaded once per session rather than repeated per-tool.
 var sessionStartTool = &sdkmcp.Tool{
 	Name: "guild_session_start",
-	Description: "Call FIRST. Set the active project, load the " +
-		"briefing, oath, and top task, and default later guild " +
-		"tools to it.",
+	Description: "Call FIRST — before any other guild tool will work. " +
+		"Sets the active project, loads the briefing, oath, and top " +
+		"task, and defaults later guild tools to it (you do not need " +
+		"to pass project to them again).",
 }
 
 // registerSessionStart wires guild_session_start onto s. Package-

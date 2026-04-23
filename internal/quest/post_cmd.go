@@ -49,8 +49,8 @@ var PostCommand = &command.Command[PostInput, PostOutput]{
 	Name:    "quest_post",
 	CLIPath: []string{"quest", "post"},
 	Short:   "create a new quest",
-	Long: "Create a quest another agent can accept without human follow-up. " +
-		"For non-trivial quests, include rich WHY + HOW (rationale, approach, constraints) so a cold agent can execute without re-deriving context from chat. " +
+	Long: "Create a quest another agent can accept without human follow-up — well-specced quest = no human follow-up needed to execute it. " +
+		"Include rich WHY + HOW (rationale, approach, constraints) so a cold agent executes without re-deriving context from chat. " +
 		"Pass spec=... to atomically attach a kind=decision lore entry with full rationale (QUEST-63).",
 	Args: []command.ArgSpec{
 		{

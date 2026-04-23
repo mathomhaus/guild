@@ -345,7 +345,7 @@ guild lore inscribe TITLE... [flags]
 
 **Aliases:** add
 
-Store knowledge that should outlive this quest. Call lore_appraise first; when the search returns entries that informed this one, pass them as informs=[IDs] to create provenance edges at write-time. Cross-project dedup and principle hygiene warnings are built in. Summary distills the durable knowledge; implementation specifics belong in the quest acceptance that called for this inscribe.
+Store knowledge that transcends the current task — patterns, decisions, research that outlive the quest. Call lore_appraise first; pass informs=[IDs] for entries that informed this one to create provenance edges at write-time. Cross-project dedup and principle-hygiene warnings are built in.
 
 **Flags**
 
@@ -951,7 +951,7 @@ create a new quest
 guild quest post SUBJECT... [flags]
 ```
 
-Create a quest another agent can accept without human follow-up. For non-trivial quests, include rich WHY + HOW (rationale, approach, constraints) so a cold agent can execute without re-deriving context from chat. Pass spec=... to atomically attach a kind=decision lore entry with full rationale (QUEST-63).
+Create a quest another agent can accept without human follow-up — well-specced quest = no human follow-up needed to execute it. Include rich WHY + HOW (rationale, approach, constraints) so a cold agent executes without re-deriving context from chat. Pass spec=... to atomically attach a kind=decision lore entry with full rationale (QUEST-63).
 
 **Flags**
 

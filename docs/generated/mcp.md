@@ -6,16 +6,16 @@ Every tool a registered MCP client sees. 38 tools.
 
 ## Tools
 
-- [`guild_session_start`](#guild_session_start) — Call FIRST.
+- [`guild_session_start`](#guild_session_start) — Call FIRST — before any other guild tool will work.
 - [`guild_set_project`](#guild_set_project) — Switch the active project for the rest of this session.
 - [`guild_status`](#guild_status) — On-demand dashboard mirroring guild_session_start — last brief, oath, echoes, top bounty, parallelism.
-- [`lore_appraise`](#lore_appraise) — Search lore before researching or inscribing.
+- [`lore_appraise`](#lore_appraise) — Search lore before storing new knowledge or spawning research subagents.
 - [`lore_catalog`](#lore_catalog) — Bulk-import .md files under DIR as lore entries.
 - [`lore_commune`](#lore_commune) — Health report for oath bloat and duplicate lore.
 - [`lore_dossier`](#lore_dossier) — Compile ~2000-token project context for subagent spawn prompts.
 - [`lore_echoes`](#lore_echoes) — List stale/decayed entries the next agent should review or reforge.
 - [`lore_inquest`](#lore_inquest) — Audit the oath wall for narrative-bloat principles (>60 words).
-- [`lore_inscribe`](#lore_inscribe) — Store knowledge that should outlive this quest.
+- [`lore_inscribe`](#lore_inscribe) — Store knowledge that transcends the current task — patterns, decisions, research that outlive the quest.
 - [`lore_link`](#lore_link) — Create an informs provenance edge between two entries.
 - [`lore_list`](#lore_list) — Browse entries with optional filters.
 - [`lore_meld`](#lore_meld) — Find duplicate lore entries across projects.
@@ -39,7 +39,7 @@ Every tool a registered MCP client sees. 38 tools.
 - [`quest_journal`](#quest_journal) — Task-scoped scratchpad.
 - [`quest_list`](#quest_list) — All open tasks.
 - [`quest_orders`](#quest_orders) — List quests currently assigned to a given agent owner.
-- [`quest_post`](#quest_post) — Create a quest another agent can accept without human follow-up.
+- [`quest_post`](#quest_post) — Create a quest another agent can accept without human follow-up — well-specced quest = no human follow-up needed to execute it.
 - [`quest_pulse`](#quest_pulse) — Rework rate, churn rate, hot files, untested quests.
 - [`quest_scroll`](#quest_scroll) — Full quest history: status, journal, timeline.
 - [`quest_summon`](#quest_summon) — Reassign a quest to a named teammate agent.
@@ -47,7 +47,7 @@ Every tool a registered MCP client sees. 38 tools.
 
 ## `guild_session_start`
 
-Call FIRST. Set the active project, load the briefing, oath, and top task, and default later guild tools to it.
+Call FIRST — before any other guild tool will work. Sets the active project, loads the briefing, oath, and top task, and defaults later guild tools to it (you do not need to pass project to them again).
 
 _no arguments_
 
@@ -123,7 +123,7 @@ _no arguments_
 
 ## `lore_appraise`
 
-Search lore before researching or inscribing. Returns ranked entries with project, kind, age, and summary.
+Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary — if current results exist, use them instead of re-deriving.
 
 _no arguments_
 
@@ -310,7 +310,7 @@ _no arguments_
 
 ## `lore_inscribe`
 
-Store knowledge that should outlive this quest. Call lore_appraise first; when the search returns entries that informed this one, pass them as informs=[IDs] to create provenance edges at write-time. Cross-project dedup and principle hygiene warnings are built in. Summary distills the durable knowledge; implementation specifics belong in the quest acceptance that called for this inscribe.
+Store knowledge that transcends the current task — patterns, decisions, research that outlive the quest. Call lore_appraise first; pass informs=[IDs] for entries that informed this one to create provenance edges at write-time. Cross-project dedup and principle-hygiene warnings are built in.
 
 _no arguments_
 
@@ -1175,7 +1175,7 @@ _no arguments_
 
 ## `quest_post`
 
-Create a quest another agent can accept without human follow-up. For non-trivial quests, include rich WHY + HOW (rationale, approach, constraints) so a cold agent can execute without re-deriving context from chat. Pass spec=... to atomically attach a kind=decision lore entry with full rationale (QUEST-63).
+Create a quest another agent can accept without human follow-up — well-specced quest = no human follow-up needed to execute it. Include rich WHY + HOW (rationale, approach, constraints) so a cold agent executes without re-deriving context from chat. Pass spec=... to atomically attach a kind=decision lore entry with full rationale (QUEST-63).
 
 _no arguments_
 

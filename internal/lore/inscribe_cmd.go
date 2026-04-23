@@ -33,7 +33,7 @@ var InscribeCommand = &command.Command[InscribeInput, InscribeCmdOutput]{
 	CLIPath:    []string{"lore", "inscribe"},
 	CLIAliases: []string{"add"},
 	Short:      "inscribe a new knowledge entry into the lore",
-	Long:       "Store knowledge that should outlive this quest. Call lore_appraise first; when the search returns entries that informed this one, pass them as informs=[IDs] to create provenance edges at write-time. Cross-project dedup and principle hygiene warnings are built in. Summary distills the durable knowledge; implementation specifics belong in the quest acceptance that called for this inscribe.",
+	Long:       "Store knowledge that transcends the current task — patterns, decisions, research that outlive the quest. Call lore_appraise first; pass informs=[IDs] for entries that informed this one to create provenance edges at write-time. Cross-project dedup and principle-hygiene warnings are built in.",
 	Args: []command.ArgSpec{
 		{Name: "title", Kind: command.ArgPositional, Type: command.ArgString, Required: true, Variadic: true, Help: "short distinctive title"},
 		{Name: "kind", Short: "k", Kind: command.ArgFlag, Type: command.ArgString, Required: true, Help: "entry kind (required): idea|research|decision|observation|principle"},

@@ -29,7 +29,7 @@ var AppraiseCommand = &command.Command[AppraiseInput, AppraiseCmdOutput]{
 	CLIPath:    []string{"lore", "appraise"},
 	CLIAliases: []string{"check"},
 	Short:      "search lore before researching or inscribing",
-	Long:       "Search lore before researching or inscribing. Returns ranked entries with project, kind, age, and summary.",
+	Long:       "Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary — if current results exist, use them instead of re-deriving.",
 	Args: []command.ArgSpec{
 		{Name: "query", Kind: command.ArgPositional, Type: command.ArgString, Required: true, Variadic: true, Help: "search query (remaining positional args joined on CLI)"},
 		{Name: "all_projects", Kind: command.ArgFlag, Type: command.ArgBool, Help: "search every project"},
