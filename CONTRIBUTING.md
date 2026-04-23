@@ -12,7 +12,40 @@ open a Discussion before writing code.
 - Skim [`internal/mcp/instructions.go`](./internal/mcp/instructions.go) —
   this is the full operating contract the MCP server ships to clients.
 
+## Fork workflow (for external contributors)
+
+If you don't have push access to `mathomhaus/guild` — the default for
+anyone outside the core maintainer set — fork first, then work on a
+branch in your fork and open a PR against `mathomhaus/guild:main`.
+
+```bash
+gh repo fork mathomhaus/guild --clone
+cd guild
+git checkout -b short-descriptive-branch-name
+# ... make changes, commit ...
+git push origin short-descriptive-branch-name
+gh pr create --repo mathomhaus/guild
+```
+
+Or fork via the GitHub UI, then clone your fork locally. Either works.
+
+### Claiming an issue
+
+Comment `/assign` on an issue labeled `good first issue` or `help
+wanted` to claim it; use `/unassign` to release it if you need to drop
+it. (Until the assign bot is live, just say so in a comment — a
+maintainer will assign you.)
+
+Being assigned means the issue is yours to work on; it does **not**
+grant push access to this repo. You still fork and open a PR from
+your fork.
+
 ## Development setup
+
+This path is for contributors with push access (maintainers,
+collaborators). External contributors should use the
+[fork workflow](#fork-workflow-for-external-contributors) above
+instead.
 
 ```bash
 git clone https://github.com/mathomhaus/guild.git
