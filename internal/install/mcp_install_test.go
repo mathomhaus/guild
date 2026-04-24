@@ -29,6 +29,10 @@ func stdClientOpts(t *testing.T, clients []Client, out *bytes.Buffer) (opts MCPI
 		In:           &bytes.Buffer{},
 		clients:      clients,
 		executableFn: func() (string, error) { return bin, nil },
+		// Fixtures use synthetic argv[0] names ("claude", "cursor", etc.)
+		// that don't exist on CI runners. Stub PATH resolution so the
+		// missing-CLI guard introduced for issue #48 doesn't skip them.
+		lookPathFn: func(name string) (string, error) { return name, nil },
 	}
 	return opts, fakeBin
 }
@@ -335,6 +339,7 @@ func TestMCPInstall_Run_WithYes(t *testing.T) {
 			// Return a no-op command that exits 0.
 			return exec.Command("true")
 		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
 	}
 
 	result, err := MCPInstall(context.Background(), opts)
@@ -467,6 +472,7 @@ func TestMCPInstall_SpacyBinPath_Run(t *testing.T) {
 			capturedArgv = append([]string{name}, arg...)
 			return exec.Command("true")
 		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
 	}
 
 	if _, err := MCPInstall(context.Background(), opts); err != nil {

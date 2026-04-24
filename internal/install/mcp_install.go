@@ -68,6 +68,11 @@ type MCPInstallOptions struct {
 	// execCmdFn creates an exec.Cmd for shelling out. Defaults to exec.Command.
 	// Injected in tests to capture or simulate CLI invocations.
 	execCmdFn func(name string, arg ...string) *exec.Cmd
+
+	// lookPathFn resolves a binary name via PATH. Defaults to exec.LookPath.
+	// Injected in tests so fixtures that use synthetic argv[0] names
+	// ("claude", "cursor") don't need those binaries on the runner's PATH.
+	lookPathFn func(string) (string, error)
 }
 
 // ClientInstruction is the computed install command for one detected client.
@@ -106,6 +111,9 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 	}
 	if opts.execCmdFn == nil {
 		opts.execCmdFn = exec.Command
+	}
+	if opts.lookPathFn == nil {
+		opts.lookPathFn = exec.LookPath
 	}
 
 	// --skill stub (not yet implemented).
@@ -224,7 +232,7 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 			// found" error. Short-circuit with a one-line notice so the
 			// user knows which CLI to install (issue #48).
 			binaryName := instr.Argv[0]
-			if _, err := exec.LookPath(binaryName); err != nil {
+			if _, err := opts.lookPathFn(binaryName); err != nil {
 				fmt.Fprintf(opts.Out, "skipping %s: %s not on PATH\n", instr.Name, binaryName)
 				result.SkippedMissingCLI = append(result.SkippedMissingCLI, instr.Name)
 				continue
