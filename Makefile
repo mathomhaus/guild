@@ -257,6 +257,7 @@ assets-model: ## Copy model.onnx + vocab.txt into every platform subdir (uses AS
 	  src="$(MODEL_CACHE)"; \
 	fi; \
 	for triple in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do \
+	  mkdir -p $(ASSETS_DIR)/$$triple; \
 	  cp "$$src/model.onnx" $(ASSETS_DIR)/$$triple/model.onnx; \
 	  cp "$$src/vocab.txt"  $(ASSETS_DIR)/$$triple/vocab.txt; \
 	done
