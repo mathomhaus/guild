@@ -273,3 +273,82 @@ func TestDefaultGitFileLastModified_OutsideRepo(t *testing.T) {
 		t.Fatalf("expected zero time for non-repo path; got %v", got)
 	}
 }
+
+// TestRepoRootResolver_CachesPerDir verifies the per-batch cache
+// behaviour the issue called out: N entries in the same dir cost one
+// lookup, not N. Different dirs still resolve independently and their
+// cached values do not leak across each other.
+func TestRepoRootResolver_CachesPerDir(t *testing.T) {
+	r := newRepoRootResolver()
+	calls := map[string]int{}
+	r.lookup = func(_ context.Context, dir string) string {
+		calls[dir]++
+		switch dir {
+		case "/repo-a/sub":
+			return "/repo-a"
+		case "/repo-b/sub":
+			return "/repo-b"
+		case "/not-a-repo":
+			return "" // empty result is itself a cache entry
+		}
+		return ""
+	}
+
+	ctx := context.Background()
+
+	// Same dir resolved 5 times -> 1 lookup, 4 cache hits.
+	for i := 0; i < 5; i++ {
+		if got := r.Resolve(ctx, "/repo-a/sub"); got != "/repo-a" {
+			t.Fatalf("call %d: got %q, want /repo-a", i, got)
+		}
+	}
+
+	// Different dir -> separate lookup, separate cache slot.
+	if got := r.Resolve(ctx, "/repo-b/sub"); got != "/repo-b" {
+		t.Fatalf("repo-b: got %q, want /repo-b", got)
+	}
+
+	// Empty result also cached; second call must not re-shell.
+	for i := 0; i < 3; i++ {
+		if got := r.Resolve(ctx, "/not-a-repo"); got != "" {
+			t.Fatalf("not-a-repo call %d: got %q, want empty", i, got)
+		}
+	}
+
+	if calls["/repo-a/sub"] != 1 {
+		t.Errorf("repo-a/sub: %d lookups, want 1", calls["/repo-a/sub"])
+	}
+	if calls["/repo-b/sub"] != 1 {
+		t.Errorf("repo-b/sub: %d lookups, want 1", calls["/repo-b/sub"])
+	}
+	if calls["/not-a-repo"] != 1 {
+		t.Errorf("not-a-repo: %d lookups, want 1 (empty result must cache)", calls["/not-a-repo"])
+	}
+}
+
+// TestRepoRootResolver_ContextThreading verifies that resolveRepoRoot
+// finds the resolver attached to a parent context even when called
+// with a derived (timeout-scoped) context — the realistic shape
+// defaultGitFileLastModified produces.
+func TestRepoRootResolver_ContextThreading(t *testing.T) {
+	r := newRepoRootResolver()
+	var calls int
+	r.lookup = func(_ context.Context, _ string) string {
+		calls++
+		return "/repo"
+	}
+
+	parent := withRepoRootResolver(context.Background(), r)
+	derived, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+
+	for i := 0; i < 3; i++ {
+		if got := resolveRepoRoot(derived, "/d"); got != "/repo" {
+			t.Fatalf("call %d: got %q, want /repo", i, got)
+		}
+	}
+
+	if calls != 1 {
+		t.Errorf("got %d lookups across the batch, want 1", calls)
+	}
+}
