@@ -116,10 +116,11 @@ const questRRFTopK = embed.RRFK
 // Coverage gate: < 0.90 falls back to BM25-only, matching
 // lore_appraise's CoverageThreshold contract (ADR-003).
 //
-// Vector arm note: the quest-specific Index must be wired separately
-// via QuestEmbedDeps at MCP init. The current wiring passes nil
-// (BM25-only fallback). The RRF path is ready; wiring is a Phase-2
-// follow-up once the MCP init path is extended.
+// Vector arm note: the quest-specific Index is wired via QuestEmbedDeps
+// resolved from command.Deps.Embed at handler entry (QUEST-258). The
+// MCP surface resolves a questEmbedProvider that lazily reconstructs
+// a QuestCorpus Index when meta.quest.embedder_state is "enabled". The
+// CLI surface passes nil (short-lived; no index warm cost).
 var SearchCommand = &command.Command[SearchInput, SearchOutput]{
 	Name:    "quest_search",
 	CLIPath: []string{"quest", "search"},
@@ -161,10 +162,8 @@ var SearchCommand = &command.Command[SearchInput, SearchOutput]{
 			return SearchOutput{}, err
 		}
 
-		// Pass nil embedDeps: BM25-only for now. The RRF path is fully
-		// implemented; wiring a QuestEmbedDeps at MCP init is a
-		// Phase-2 follow-up (see QUEST-224 spec body).
-		return RunQuestSearchForProject(ctx, db, query, limit, pid, nil)
+		embedDeps := questEmbedFromDeps(ctx, d)
+		return RunQuestSearchForProject(ctx, db, query, limit, pid, embedDeps)
 	},
 	CLIFormat: func(s command.CLISink, o SearchOutput) string { return formatSearch(s, o) },
 	MCPFormat: func(s command.MCPSink, o SearchOutput) string { return formatSearch(s, o) },
@@ -173,7 +172,7 @@ var SearchCommand = &command.Command[SearchInput, SearchOutput]{
 // QuestEmbedDeps carries the optional quest-specific vector pipeline.
 // Parallel to lore.EmbedDeps but bound to QuestCorpus and the
 // quest_vectors / tasks_fts_rows tables. Nil means BM25-only (graceful
-// Phase-0 fallback). Wiring at MCP init is a Phase-2 follow-up.
+// Phase-0 fallback). Wired at MCP init via questEmbedProvider (QUEST-258).
 type QuestEmbedDeps struct {
 	// Embedder encodes query text into float32 vectors.
 	Embedder embed.Embedder
@@ -396,6 +395,35 @@ func hydrateQuestResults(ctx context.Context, db *sql.DB, ids []int64, limit int
 		}
 	}
 	return out, nil
+}
+
+// questEmbedResolver is the lazy-reconstruct interface the MCP adapter
+// implements. Parallel to lore's embedResolver (internal/lore/embed_deps.go).
+// Declared locally so the quest package does not import internal/mcp.
+type questEmbedResolver interface {
+	ResolveQuestEmbedDeps(ctx context.Context) *QuestEmbedDeps
+}
+
+// questEmbedFromDeps extracts *QuestEmbedDeps from command.Deps.Embed.
+// Two shapes are supported:
+//
+//   - *QuestEmbedDeps: returned unchanged (CLI surface or direct test injection).
+//   - questEmbedResolver: calls ResolveQuestEmbedDeps(ctx) for the lazy MCP path.
+//
+// Unknown types (including the lore *EmbedDeps stored there) produce nil so
+// an accidental bad assignment falls back to BM25 instead of panicking.
+func questEmbedFromDeps(ctx context.Context, d command.Deps) *QuestEmbedDeps {
+	if d.Embed == nil {
+		return nil
+	}
+	switch v := d.Embed.(type) {
+	case *QuestEmbedDeps:
+		return v
+	case questEmbedResolver:
+		return v.ResolveQuestEmbedDeps(ctx)
+	default:
+		return nil
+	}
 }
 
 // formatSearch renders SearchOutput for both CLI and MCP sinks.

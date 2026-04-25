@@ -23,6 +23,10 @@ func Register(s *sdkmcp.Server) {
 	// trap captured in LORE-371). Each test-spawned server gets its
 	// own provider.
 	currentEmbedProvider = newEmbedProvider(openLoreDB, newLogger())
+	// Quest embed provider shares the lore-side Embedder and builds its own
+	// QuestCorpus Index against quest.db. Resolves lazily on the first
+	// quest_search call that sees meta.quest.embedder_state="enabled". QUEST-258.
+	currentQuestEmbedProvider = newQuestEmbedProvider(currentEmbedProvider, openQuestDB, newLogger())
 	// Reset the auto-backfill once-guard so each server rebuild sees a
 	// fresh trigger. The provider's first post-reset resolve that wires
 	// a live *EmbedDeps fires the per-corpus backfill goroutines.
@@ -40,17 +44,25 @@ func Register(s *sdkmcp.Server) {
 // provider with its own cache + mutex. QUEST-219.
 var currentEmbedProvider *embedProvider
 
+// currentQuestEmbedProvider is the per-server-rebuild quest embed lazy-resolver.
+// Quest_search pulls *quest.QuestEmbedDeps from it via questEmbedFromDeps;
+// a nil return means BM25-only. Shares the lore-side Embedder; builds its own
+// QuestCorpus Index against quest.db. QUEST-258.
+var currentQuestEmbedProvider *questEmbedProvider
+
 // buildMCPCommandDeps constructs the quest-side Deps bundle. The
 // registry's OpenDB opens quest.db; ResolveProj uses the auto-bootstrap
 // resolver so MCP reconnects are invisible (QUEST-65). RecordTelemetry
 // wires the MCP usage.log emitter so every tool call produces a row.
 // PrependNarration enables the auto-bootstrap narration path in the MCP
-// handler wrapper — when auto-bootstrap fires, the narration line is
+// handler wrapper: when auto-bootstrap fires, the narration line is
 // prepended to the tool's output body. OpenLoreDB is wired so
 // quest_post's spec= param (QUEST-63) can atomically inscribe a
 // kind=decision lore entry alongside the quest.
+// Embed carries the questEmbedProvider so quest_search can reach the
+// RRF arm when meta.quest.embedder_state="enabled" (QUEST-258).
 func buildMCPCommandDeps() command.Deps {
-	return command.Deps{
+	d := command.Deps{
 		OpenDB:           openQuestDB,
 		ResolveProj:      resolveProjectAutoBootstrap,
 		Now:              time.Now,
@@ -59,6 +71,10 @@ func buildMCPCommandDeps() command.Deps {
 		OpenLoreDB:       openLoreDB,
 		EvaluateHints:    hintsBridge(),
 	}
+	if currentQuestEmbedProvider != nil {
+		d.Embed = currentQuestEmbedProvider
+	}
+	return d
 }
 
 // buildMCPLoreDeps is the lore-side sibling. Identical ResolveProj with
