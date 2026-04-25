@@ -5,10 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mathomhaus/guild/internal/command"
+	"github.com/mathomhaus/guild/internal/lore/embed"
 	"github.com/mathomhaus/guild/internal/quest"
 	"github.com/mathomhaus/guild/internal/storage"
 )
@@ -340,4 +343,129 @@ func TestCLI_QuestClear_BriefHint(t *testing.T) {
 			t.Errorf("unexpected hint after brief was written; got:\n%s", stdout)
 		}
 	})
+}
+
+// TestCLI_QuestSearch_RRFArmAboveCoverageFloor is the QUEST-259 regression
+// gate: when a *quest.QuestEmbedDeps is wired into command.Deps.Embed on
+// the CLI surface and quest corpus coverage is at or above the 0.90 floor,
+// the quest search handler must return arm=rrf.
+//
+// This mirrors TestQuestSearch_RRFArmAboveCoverageFloor in
+// internal/quest/search_cmd_test.go but exercises it via the CLI
+// command.Deps path (same handler code that `guild quest search` uses).
+// The *quest.QuestEmbedDeps is injected directly rather than via
+// wireQuestEmbedDeps because CLI tests run without -tags=withembed
+// (no bundled BGE assets); wireQuestEmbedDeps is tested separately
+// for the nil-safety contract (it must return nil when the embedder
+// is not available rather than panic).
+func TestCLI_QuestSearch_RRFArmAboveCoverageFloor(t *testing.T) {
+	const proj = "guild-cli-rrf"
+	setupQuestCLI(t, proj)
+	ctx := context.Background()
+
+	db, err := storage.Open(ctx, questDBPathOverride)
+	if err != nil {
+		t.Fatalf("open quest db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Post enough quests to have a non-trivial corpus.
+	const totalQuests = 10
+	for i := 1; i <= totalQuests; i++ {
+		if _, postErr := quest.Post(ctx, db, proj, quest.PostParams{
+			Subject: fmt.Sprintf("implement feature variant %d for search pipeline", i),
+		}); postErr != nil {
+			t.Fatalf("post quest %d: %v", i, postErr)
+		}
+	}
+
+	// tasks_fts_rows is populated by trigger on task_notes insert.
+	rows, err := db.QueryContext(ctx, `SELECT id FROM tasks_fts_rows`)
+	if err != nil {
+		t.Fatalf("query tasks_fts_rows: %v", err)
+	}
+	var bridgeIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan bridge id: %v", err)
+		}
+		bridgeIDs = append(bridgeIDs, id)
+	}
+	_ = rows.Close()
+	if len(bridgeIDs) == 0 {
+		t.Skip("no tasks_fts_rows after insert; trigger may not have fired in this schema version")
+	}
+
+	// Seed vectors for all bridge rows using DeterministicEmbedder.
+	embedder := embed.NewDeterministicEmbedder()
+	const modelID = "bge-small-en-v1.5-int8-cls"
+	for _, id := range bridgeIDs {
+		vec, embedErr := embedder.Embed(ctx, "subject: feature variant search pipeline")
+		if embedErr != nil {
+			t.Fatalf("embed row %d: %v", id, embedErr)
+		}
+		entry := embed.PendingEntry{ID: id, Summary: "feature variant"}
+		if insertErr := embed.InsertVectorRow(ctx, db, embed.QuestCorpus{}, entry, vec, modelID); insertErr != nil {
+			t.Fatalf("insert vector row %d: %v", id, insertErr)
+		}
+	}
+
+	// Set coverage meta so questVectorTopK reads a passing ratio.
+	n := int64(len(bridgeIDs))
+	upsertCLIQuestMeta(t, db, "quest.embedder_state", "enabled")
+	upsertCLIQuestMeta(t, db, "quest.embedder_model_id", modelID)
+	upsertCLIQuestMeta(t, db, "quest.vector_coverage_num", fmt.Sprintf("%d", n))
+	upsertCLIQuestMeta(t, db, "quest.vector_coverage_den", fmt.Sprintf("%d", n))
+
+	// Build QuestEmbedDeps with an Index loaded from the DB.
+	idx := embed.NewIndex(embed.QuestCorpus{}, modelID)
+	if _, loadErr := idx.LoadFromDB(ctx, db); loadErr != nil {
+		t.Fatalf("LoadFromDB: %v", loadErr)
+	}
+	embedDeps := &quest.QuestEmbedDeps{
+		Embedder: embedder,
+		Index:    idx,
+		ModelID:  modelID,
+	}
+
+	// Construct CLI-surface Deps with Embed wired, mirroring the shape
+	// buildCLICommandDeps produces when wireQuestEmbedDeps returns non-nil.
+	// openQuestDB reads questDBPathOverride at call time, so the handler
+	// sees the same seeded DB the fixture just populated.
+	deps := command.Deps{
+		OpenDB: openQuestDB,
+		ResolveProj: func(_ context.Context, _ string) (string, error) {
+			return proj, nil
+		},
+		Embed: embedDeps,
+	}
+
+	out, err := quest.SearchCommand.Handler(ctx, deps, quest.SearchInput{
+		Query:   "feature search pipeline",
+		Limit:   10,
+		Project: proj,
+	})
+	if err != nil {
+		t.Fatalf("search handler: %v", err)
+	}
+	if out.Arm != "rrf" {
+		t.Errorf("arm: got %q want %q (coverage=%.2f)", out.Arm, "rrf", out.Coverage)
+	}
+	if len(out.Results) == 0 {
+		t.Error("expected results with rrf arm, got none")
+	}
+}
+
+// upsertCLIQuestMeta inserts or updates a row in the meta table for CLI tests.
+func upsertCLIQuestMeta(t *testing.T, db *sql.DB, key, value string) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(),
+		`INSERT INTO meta (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	if err != nil {
+		t.Fatalf("upsertCLIQuestMeta %s=%s: %v", key, value, err)
+	}
 }
