@@ -145,3 +145,40 @@ func TestBloatWarn_NoWarnFlag(t *testing.T) {
 		"--no-warn must suppress the bloat warning")
 	assertContains(t, inv.Stdout, "inscribed", "stdout must confirm insert with --no-warn")
 }
+
+// TestBloatWarn_OnlyOneWarning verifies that the inscribe-time ⚠️ warning
+// is the only warning surfaced for an over-length principle — the
+// hints-engine `principle-too-long` rule has been removed in favor of
+// the inline warning. Regression guard for #52.
+func TestBloatWarn_OnlyOneWarning(t *testing.T) {
+	ctx := context.Background()
+	homeDir := t.TempDir()
+	projDir := filepath.Join(homeDir, "single-warn-proj")
+	_ = initProject(ctx, t, homeDir, projDir)
+
+	// Same fixture as TestBloatWarn_LongPrinciple — guaranteed >60 words.
+	title := "long principle title that already uses ten distinct words for the test"
+	summary := "principles bloat the session-start oath wall when their combined title and summary word count exceeds sixty words which happens frequently when agents encode policy as verbose prose rather than as short memorable behavioral rules that actually fit into a session context window without burning tokens on every single session start call"
+
+	inv := inscribe(ctx, t, homeDir, projDir, title, "principle", summary, "hygiene")
+	assertExitOK(t, inv, "long principle inscribe (single-warning)")
+
+	// Exactly one ⚠️ "principle exceeds" line on stderr.
+	exceedCount := strings.Count(inv.Stderr, "principle exceeds")
+	if exceedCount != 1 {
+		t.Errorf("stderr contains %d 'principle exceeds' lines, want exactly 1\nstderr:\n%s",
+			exceedCount, inv.Stderr)
+	}
+
+	// No hints-engine principle-too-long fire on either channel.
+	for _, name := range []string{"stderr", "stdout"} {
+		stream := inv.Stderr
+		if name == "stdout" {
+			stream = inv.Stdout
+		}
+		if strings.Contains(stream, "principle-too-long") {
+			t.Errorf("%s mentions hints-engine rule 'principle-too-long' (rule was removed):\n%s",
+				name, stream)
+		}
+	}
+}
