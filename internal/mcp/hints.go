@@ -30,6 +30,17 @@ var currentHintsEngine *hints.Engine
 //
 //nolint:contextcheck // called during Register (no per-request ctx); writes use per-Evaluate ctx later
 func initHintsEngine() *hints.Engine {
+	// Close any prior engine's DB before opening a new one. The package
+	// stores the engine in currentHintsEngine; we own it through Register
+	// rebuilds and must release the underlying *sql.DB handle when we
+	// drop our reference.
+	if prev := currentHintsEngine; prev != nil {
+		if err := prev.Close(); err != nil {
+			slog.Debug("mcp: hints: closing previous engine failed", "err", err)
+		}
+		currentHintsEngine = nil
+	}
+
 	ctx := context.Background()
 
 	db, err := openQuestDB(ctx)

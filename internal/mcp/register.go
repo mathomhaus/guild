@@ -15,6 +15,12 @@ import (
 func Register(s *sdkmcp.Server) {
 	// Reset so hintsBridge builds one engine per server rebuild and all
 	// Deps builders in this Register share it. See hints.go comment.
+	// Close any prior engine's DB before zeroing — Register is the
+	// single drop site that runs before initHintsEngine on the next
+	// hintsBridge call. See internal/hints/engine.go::Close.
+	if prev := currentHintsEngine; prev != nil {
+		_ = prev.Close()
+	}
 	currentHintsEngine = nil
 	// The embedder port (ADR-003 Phase 1, QUEST-219 lazy-reconstruct)
 	// is wired as a provider, not a static *EmbedDeps. The provider

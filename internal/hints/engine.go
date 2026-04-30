@@ -127,6 +127,17 @@ func (e *Engine) Context() *Context {
 	return e.context
 }
 
+// Close releases resources held by the engine — specifically the
+// Store's *sql.DB handle. Safe to call on a nil engine or on an engine
+// whose Store/DB is nil. Returns the underlying sql.DB.Close() error
+// when applicable.
+func (e *Engine) Close() error {
+	if e == nil || e.Store == nil || e.Store.DB == nil {
+		return nil
+	}
+	return e.Store.DB.Close()
+}
+
 // Fire is the result of an Evaluate call. Empty Fire (zero-value) means
 // no hint should be rendered.
 type Fire struct {
