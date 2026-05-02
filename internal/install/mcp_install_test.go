@@ -689,3 +689,101 @@ func TestScanForGuildEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestMCPInstall_Run_NilListArgv_FallsThrough verifies that a client whose
+// ListArgv is nil (no list-MCP CLI shape known) skips the probe entirely
+// and proceeds with the install as the unconditional first-run path did.
+func TestMCPInstall_Run_NilListArgv_FallsThrough(t *testing.T) {
+	var installCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = nil
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			if name == "claude" {
+				installCalls++
+				return exec.Command("true")
+			}
+			t.Errorf("unexpected exec call: %s %v", name, arg)
+			return exec.Command("false")
+		},
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+
+	if installCalls != 1 {
+		t.Errorf("install ran %d times, want 1", installCalls)
+	}
+	if len(result.AlreadyRegistered) != 0 {
+		t.Errorf("AlreadyRegistered = %v, want empty (probe disabled)", result.AlreadyRegistered)
+	}
+}
+
+// TestMCPInstall_Run_FailingProbe_FallsThrough verifies that a probe that
+// errors (non-zero exit / unreadable output) does not block installation —
+// the docstring on isGuildRegistered explicitly calls this out.
+func TestMCPInstall_Run_FailingProbe_FallsThrough(t *testing.T) {
+	var installCalls, listCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				listCalls++
+				return exec.Command("false") // simulate non-zero exit
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+
+	if listCalls != 1 {
+		t.Errorf("list probe ran %d times, want 1", listCalls)
+	}
+	if installCalls != 1 {
+		t.Errorf("install ran %d times, want 1 (probe failure must fall through)", installCalls)
+	}
+	if len(result.AlreadyRegistered) != 0 {
+		t.Errorf("AlreadyRegistered = %v, want empty", result.AlreadyRegistered)
+	}
+}
