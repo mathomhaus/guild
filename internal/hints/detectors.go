@@ -266,35 +266,6 @@ func followQuestUpdateOrJournal(_ *Context, ev CallEvent) bool {
 }
 
 // -----------------------------------------------------------------------
-// ℹ️ fyi — principle-too-long
-// -----------------------------------------------------------------------
-
-// principleMaxWords is the oath-hygiene target from ENTRY-21 / the ≤60-word
-// oath principle. Mirrors lore.PrincipleMaxWordsDefault.
-const principleMaxWords = 60
-
-// triggerPrincipleTooLong fires on lore_inscribe(kind=principle) whose
-// title+summary word count exceeds the principle bound.
-func triggerPrincipleTooLong(_ *Context, ev CallEvent) bool {
-	kind := strings.ToLower(strings.TrimSpace(ev.StringArg("kind")))
-	if kind != "principle" {
-		return false
-	}
-	title := strings.TrimSpace(ev.StringArg("title"))
-	summary := strings.TrimSpace(ev.StringArg("summary"))
-	if title == "" && summary == "" {
-		return false
-	}
-	return wordCount(title)+wordCount(summary) > principleMaxWords
-}
-
-// followPrincipleShortened hits on a later lore_update or lore_reforge
-// targeting a lore entry — the agent has done SOMETHING to tighten up.
-func followPrincipleShortened(_ *Context, ev CallEvent) bool {
-	return ev.Tool == "lore_update" || ev.Tool == "lore_reforge"
-}
-
-// -----------------------------------------------------------------------
 // ℹ️ fyi — inscribe-without-transfer-reasoning
 // -----------------------------------------------------------------------
 //
