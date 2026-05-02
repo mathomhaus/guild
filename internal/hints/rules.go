@@ -93,7 +93,7 @@ func Definitions() []Rule {
 			Caveat:        "Era-aware severity: 💡 hint on MCP, ℹ️ fyi on Bash CLI (18.7pp gap in ENTRY-29 calibration).",
 		},
 
-		// ℹ️ fyi (demote) — 4 rules.
+		// ℹ️ fyi (demote) — 3 rules.
 		{
 			ID:            "inscribe-without-appraise",
 			TriggerTool:   "lore_inscribe",
@@ -107,13 +107,6 @@ func Definitions() []Rule {
 			Trigger:       triggerClearWithoutReportDetail,
 			FollowThrough: followQuestUpdateOrJournal,
 			Caveat:        "Demoted to fyi; short reports are legitimate for trivial clears.",
-		},
-		{
-			ID:            "principle-too-long",
-			TriggerTool:   "lore_inscribe",
-			Trigger:       triggerPrincipleTooLong,
-			FollowThrough: followPrincipleShortened,
-			Caveat:        "Demoted to fyi; the 60-word bound mirrors lore's PrincipleMaxWordsDefault hygiene warning.",
 		},
 		{
 			ID:            "inscribe-without-transfer-reasoning",

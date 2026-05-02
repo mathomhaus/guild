@@ -128,7 +128,7 @@ func TestHints_E2E_SlugQuery_OnlyOnZeroResult(t *testing.T) {
 
 	// Seed one lore entry whose title matches the upcoming slug query so
 	// the search returns at least one hit. Use kind=observation so no
-	// other hint (principle-too-long, inscribe-looks-like-quest) tries to
+	// other hint (inscribe-looks-like-quest) tries to
 	// win the budget slot.
 	if _, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name: "lore_inscribe",
