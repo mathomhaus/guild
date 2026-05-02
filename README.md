@@ -206,6 +206,11 @@ State lives in SQLite under `~/.guild/`. Switching MCP clients requires no expor
 See [AGENTS.md](./AGENTS.md) for the agent-facing contributor contract
 and [CONTRIBUTING.md](./CONTRIBUTING.md) for the human-facing workflow.
 
+Filing a quest and unsure which campaign to use, or whether to invent
+a new one? See [docs/CAMPAIGNS.md](./docs/CAMPAIGNS.md) for how
+campaigns are scoped, when to reuse vs create, and how `guild quest
+guild` is the canonical view of the live list.
+
 Maintainers shipping releases that embed the int8 ONNX retrieval
 model: see [docs/MODEL.md](./docs/MODEL.md) for the two-workflow build
 pattern (model production vs binary release), the `.model-version`
