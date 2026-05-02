@@ -94,7 +94,7 @@ func TestClients_WellFormed(t *testing.T) {
 		}
 		if c.InstallArgv == nil {
 			t.Errorf("client %q has nil InstallArgv", c.Name)
-		} else if argv := c.InstallArgv("/usr/local/bin/guild"); len(argv) == 0 {
+		} else if argv := c.InstallArgv(filepath.Join(t.TempDir(), "guild")); len(argv) == 0 {
 			t.Errorf("client %q InstallArgv returned empty slice", c.Name)
 		}
 		if c.CLIProbe == "" && c.ConfigProbe == "" {
