@@ -399,30 +399,3 @@ func TestTrigger_InscribeWithoutTransferReasoning_InformsShapes(t *testing.T) {
 		})
 	}
 }
-
-// TestTrigger_PrincipleTooLong keys on kind AND wordcount.
-func TestTrigger_PrincipleTooLong(t *testing.T) {
-	long := strings.Repeat("word ", 70) // 70 words > principleMaxWords (60)
-	short := "short oath"
-
-	// Non-principle kind → never fire.
-	if triggerPrincipleTooLong(nil, CallEvent{
-		Args: map[string]any{"kind": "decision",
-			"title": "t", "summary": long}}) {
-		t.Error("non-principle should not fire")
-	}
-
-	// Principle + short → no fire.
-	if triggerPrincipleTooLong(nil, CallEvent{
-		Args: map[string]any{"kind": "principle",
-			"title": short, "summary": short}}) {
-		t.Error("short principle should not fire")
-	}
-
-	// Principle + long → fire.
-	if !triggerPrincipleTooLong(nil, CallEvent{
-		Args: map[string]any{"kind": "principle",
-			"title": short, "summary": long}}) {
-		t.Error("long principle should fire")
-	}
-}

@@ -15,7 +15,7 @@ import (
 func Register(s *sdkmcp.Server) {
 	// Reset so hintsBridge builds one engine per server rebuild and all
 	// Deps builders in this Register share it. See hints.go comment.
-	currentHintsEngine = nil
+	closeCurrentHintsEngine()
 	// The embedder port (ADR-003 Phase 1, QUEST-219 lazy-reconstruct)
 	// is wired as a provider, not a static *EmbedDeps. The provider
 	// re-reads meta.embedder_state on every lore tool entry and

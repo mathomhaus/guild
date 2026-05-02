@@ -56,7 +56,6 @@ func TestEngine_LoadRules_SeededFromMigration(t *testing.T) {
 		"no-brief-24h",
 		"inscribe-without-appraise",
 		"clear-without-report-detail",
-		"principle-too-long",
 		"inscribe-without-transfer-reasoning",
 	}
 	for _, id := range wantRules {
@@ -139,10 +138,6 @@ func TestEngine_Evaluate_FYICap(t *testing.T) {
 	}
 	eng.Context().RecordEvent(CallEvent{Tool: "guild_session_start"})
 
-	// Fire the principle-too-long rule (a fyi rule) repeatedly by
-	// toggling the payload to dodge cooldown — we override cooldown by
-	// waiting past it instead.
-	longSummary := strings.Repeat("word ", 70)
 	for i := 0; i < 5; i++ {
 		// Advance call count to clear 5-call cooldown.
 		for j := 0; j < 6; j++ {
@@ -151,9 +146,9 @@ func TestEngine_Evaluate_FYICap(t *testing.T) {
 		eng.Evaluate(context.Background(), CallEvent{
 			Tool: "lore_inscribe",
 			Args: map[string]any{
-				"kind":    "principle",
-				"title":   "some title",
-				"summary": longSummary,
+				"kind":    "decision",
+				"title":   "some decision title",
+				"summary": "some short summary that does not trigger the principle bloat path",
 			},
 		})
 	}

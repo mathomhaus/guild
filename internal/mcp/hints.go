@@ -31,6 +31,7 @@ var currentHintsEngine *hints.Engine
 //nolint:contextcheck // called during Register (no per-request ctx); writes use per-Evaluate ctx later
 func initHintsEngine() *hints.Engine {
 	ctx := context.Background()
+	closeCurrentHintsEngine()
 
 	db, err := openQuestDB(ctx)
 	if err != nil {
@@ -50,6 +51,16 @@ func initHintsEngine() *hints.Engine {
 	}
 	currentHintsEngine = eng
 	return eng
+}
+
+func closeCurrentHintsEngine() {
+	if currentHintsEngine == nil {
+		return
+	}
+	if err := currentHintsEngine.Close(); err != nil {
+		slog.Debug("mcp: hints: close old engine failed", "err", err)
+	}
+	currentHintsEngine = nil
 }
 
 // hintsBridge returns a command.EvaluateHintsFunc wired to the current
