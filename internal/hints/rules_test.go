@@ -17,7 +17,6 @@ func TestDefinitions_LaunchSet10(t *testing.T) {
 		"no-brief-24h":                        true,
 		"inscribe-without-appraise":           true,
 		"clear-without-report-detail":         true,
-		"principle-too-long":                  true,
 		"inscribe-without-transfer-reasoning": true,
 	}
 	if len(defs) != len(want) {
