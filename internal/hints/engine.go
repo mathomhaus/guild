@@ -79,6 +79,16 @@ func NewEngine(store *Store, sessionID string, era Era) *Engine {
 	}
 }
 
+// Close releases resources owned by the engine.
+func (e *Engine) Close() error {
+	if e == nil || e.Store == nil || e.Store.DB == nil {
+		return nil
+	}
+	db := e.Store.DB
+	e.Store.DB = nil
+	return db.Close()
+}
+
 // LoadRules merges DB metadata with the pure-function Rule detectors,
 // building the engine's rule table. Call once after NewEngine, before
 // the first Evaluate. Reloading is idempotent.

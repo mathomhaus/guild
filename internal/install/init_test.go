@@ -67,17 +67,23 @@ func testDBPaths(t *testing.T) (loreDB, questDB string) {
 	return filepath.Join(dir, "lore.db"), filepath.Join(dir, "quest.db")
 }
 
-// newOpts returns InitOptions with output captured, test-local DBs, and --yes
-// so tests don't block on interactive prompts.
+// newOpts returns InitOptions with output captured, test-local DBs, --yes
+// so tests don't block on interactive prompts, and a fakeExecutable so the
+// MCP registration step's resolveAbsBinPath does not require a real
+// system-installed guild binary. Without this injection, any environment
+// without a prior `guild` install (CI runners, fresh dev boxes, Nix, etc.)
+// fails every Init test with "guild binary not found in any durable
+// location" — see #49.
 func newOpts(t *testing.T, buf *bytes.Buffer) InitOptions {
 	t.Helper()
 	loreDB, questDB := testDBPaths(t)
 	return InitOptions{
-		Yes:         true,
-		Out:         buf,
-		In:          &bytes.Buffer{},
-		LoreDBPath:  loreDB,
-		QuestDBPath: questDB,
+		Yes:          true,
+		Out:          buf,
+		In:           &bytes.Buffer{},
+		LoreDBPath:   loreDB,
+		QuestDBPath:  questDB,
+		executableFn: fakeExecutable(t),
 	}
 }
 
@@ -281,11 +287,12 @@ func TestInit_YesFlag_NonInteractive(t *testing.T) {
 	var out bytes.Buffer
 
 	_, err := Init(ctx, dir, InitOptions{
-		Yes:         true,
-		Out:         &out,
-		In:          &bytes.Buffer{},
-		LoreDBPath:  loreDB,
-		QuestDBPath: questDB,
+		Yes:          true,
+		Out:          &out,
+		In:           &bytes.Buffer{},
+		LoreDBPath:   loreDB,
+		QuestDBPath:  questDB,
+		executableFn: fakeExecutable(t),
 	})
 	if err != nil {
 		t.Fatalf("Init --yes: %v", err)
@@ -403,11 +410,12 @@ func TestInit_MultipleRuns_NoDuplicateSections(t *testing.T) {
 		t.Helper()
 		var out bytes.Buffer
 		if _, err := Init(ctx, dir, InitOptions{
-			Yes:         true,
-			Out:         &out,
-			In:          &bytes.Buffer{},
-			LoreDBPath:  loreDB,
-			QuestDBPath: questDB,
+			Yes:          true,
+			Out:          &out,
+			In:           &bytes.Buffer{},
+			LoreDBPath:   loreDB,
+			QuestDBPath:  questDB,
+			executableFn: fakeExecutable(t),
 		}); err != nil {
 			t.Fatalf("Init: %v", err)
 		}
