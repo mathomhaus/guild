@@ -157,6 +157,12 @@ func runAppraise(cmd *cobra.Command, args []string, f appraiseFlags) error {
 		scoring.WRecency = f.WRecency
 	}
 
+	// Construct EmbedDeps against the already-open db so we reuse the
+	// connection for the meta probe. Async=false, LoadIndex=false:
+	// the CLI surface is short-lived; the Appraise RRF path embeds
+	// the query live and runs SQL TopK. Nil is fine: handler falls
+	// back to BM25+stopwords per ADR-003.
+	embedDeps, _, _ := lore.WireEmbedDeps(ctx, db, lore.EmbedWireOptions{Async: false, LoadIndex: false, Logger: newCLILogger()})
 	out, err := lore.Appraise(ctx, db, lore.AppraiseParams{
 		Query:       query,
 		Limit:       f.Limit,
@@ -166,6 +172,7 @@ func runAppraise(cmd *cobra.Command, args []string, f appraiseFlags) error {
 		IncludeAll:  f.IncludeAll,
 		Scoring:     scoring,
 		Now:         time.Now().UTC(),
+		Embed:       embedDeps,
 	})
 	if err != nil {
 		return err
@@ -464,9 +471,14 @@ func bindLoreRegistryVerb[I, O any](parent *cobra.Command, spec *command.Command
 	wrapTelemetry(parent, spec.CLIPath[len(spec.CLIPath)-1], telemetryLabel)
 }
 
-// buildCLILoreDeps mirrors buildCLICommandDeps but opens lore.db.
+// buildCLILoreDeps mirrors buildCLICommandDeps but opens lore.db. The
+// Embed field is populated lazily at handler invocation time via
+// wireCLIEmbedOnHandler so we do not pay the BGE probe cost for CLI
+// commands that never touch the vector path (every verb outside
+// inscribe/update/reforge/appraise). Every lore handler already
+// tolerates a nil Embed pointer per ADR-003 nil-safety.
 func buildCLILoreDeps() command.Deps {
-	return command.Deps{
+	d := command.Deps{
 		OpenDB: openLoreDB,
 		ResolveProj: func(ctx context.Context, argProject string) (string, error) {
 			db, err := openLoreDB(ctx)
@@ -482,4 +494,37 @@ func buildCLILoreDeps() command.Deps {
 		},
 		Now: time.Now,
 	}
+	// command.Deps.Embed is `any`; setting it to a typed-nil pointer
+	// would become a non-nil interface. Assign only when the wiring
+	// yielded a real EmbedDeps.
+	if e := wireCLIEmbedDeps(); e != nil {
+		d.Embed = e
+	}
+	return d
+}
+
+// wireCLIEmbedDeps opens lore.db once at CLI Deps construction time
+// and returns the *lore.EmbedDeps (or nil) that every lore verb
+// handler will see via command.Deps.Embed. Uses Async=false (short-
+// lived process must not fire-and-forget Tx2) and LoadIndex=false
+// (scanning 10k rows on every CLI invocation is pure overhead; the
+// RRF path still runs via live embedding + SQL TopK when needed).
+//
+// Nil-return is the expected default on fresh clones, on Windows, and
+// until the user has run `guild init` against a binary built with
+// -tags=withembed. Downstream handlers branch to BM25+stopwords.
+func wireCLIEmbedDeps() *lore.EmbedDeps {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := openLoreDB(ctx)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = db.Close() }()
+	deps, _, _ := lore.WireEmbedDeps(ctx, db, lore.EmbedWireOptions{
+		Async:     false,
+		LoadIndex: false,
+		Logger:    newCLILogger(),
+	})
+	return deps
 }

@@ -24,7 +24,7 @@ func TestReforge_HappyPath(t *testing.T) {
 		Summary: "s", Topic: "x",
 	})
 
-	if err := Reforge(ctx, db, oldE.Entry.ID, newE.Entry.ID, time.Time{}); err != nil {
+	if err := Reforge(ctx, db, oldE.Entry.ID, newE.Entry.ID, time.Time{}, nil); err != nil {
 		t.Fatalf("reforge: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestReforge_AtomicityOnFault(t *testing.T) {
 	reforgeFaultForTest = func() error { return injected }
 	t.Cleanup(func() { reforgeFaultForTest = nil })
 
-	err := Reforge(ctx, db, oldE.Entry.ID, newE.Entry.ID, time.Time{})
+	err := Reforge(ctx, db, oldE.Entry.ID, newE.Entry.ID, time.Time{}, nil)
 	if err == nil {
 		t.Fatalf("expected injected error, got nil")
 	}
@@ -118,7 +118,7 @@ func TestReforge_SelfIsError(t *testing.T) {
 		Title:   "entry that would reforge into itself test demo case",
 		Summary: "s", Topic: "x",
 	})
-	err := Reforge(ctx, db, a.Entry.ID, a.Entry.ID, time.Time{})
+	err := Reforge(ctx, db, a.Entry.ID, a.Entry.ID, time.Time{}, nil)
 	if !errors.Is(err, ErrReforgeSelf) {
 		t.Errorf("want ErrReforgeSelf, got %v", err)
 	}
@@ -133,7 +133,7 @@ func TestReforge_MissingIDsErrorBeforeTx(t *testing.T) {
 		Title:   "entry for missing id rejection test case thing",
 		Summary: "s", Topic: "x",
 	})
-	err := Reforge(ctx, db, a.Entry.ID, 9999, time.Time{})
+	err := Reforge(ctx, db, a.Entry.ID, 9999, time.Time{}, nil)
 	if !errors.Is(err, ErrEntryNotFound) {
 		t.Errorf("want ErrEntryNotFound, got %v", err)
 	}

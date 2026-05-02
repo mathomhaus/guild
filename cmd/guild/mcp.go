@@ -30,6 +30,9 @@ func wireMCPServe() {
 // the SDK.
 func init() {
 	wireMCPServe()
+	// Wire the ldflags-stamped version into the MCP layer so
+	// guild_session_start can emit an upgrade nudge when appropriate.
+	mcp.SetBinaryVersion(version)
 }
 
 // runMCPServe is the cobra RunE for `guild mcp serve`. Uses a

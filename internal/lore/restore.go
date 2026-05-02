@@ -170,6 +170,19 @@ func restoreV1(ctx context.Context, db *sql.DB, projectID string, data []byte) (
 		}
 		idMap[oldID] = newID
 		result.Imported++
+
+		// Increment vector_coverage_den for every newly inserted
+		// entry whose status counts toward the coverage denominator
+		// (everything except archived and parked). Per ADR-003
+		// "Mutation semantics", restore is the symmetric counterpart
+		// to seal's decrement. Tab-level atomicity here is fine
+		// because restore is a single-writer operation; concurrent
+		// restore against the same project is not a supported mode.
+		if status != string(StatusArchived) && status != string(StatusParked) {
+			if _, err := db.ExecContext(ctx, sqlBumpCoverageDen); err != nil {
+				return nil, fmt.Errorf("lore: restore v1: bump vector_coverage_den: %w", err)
+			}
+		}
 	}
 
 	// Reconstruct links using the id_map.

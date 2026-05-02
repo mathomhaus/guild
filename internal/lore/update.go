@@ -30,6 +30,14 @@ type UpdateParams struct {
 	Kind    *Kind
 
 	Now time.Time // injectable for deterministic tests; zero → time.Now().UTC()
+
+	// Embed is the optional embeddings pipeline. When a summary change
+	// is detected (content_hash diff against the stored lore_vectors row),
+	// Update flips vector_state='stale' in the same SET clause and then
+	// dispatches a Tx2 re-embed. When Embed is nil or not Enabled, Update
+	// still flips vector_state='stale' on a summary change so a later
+	// init-backfill pass picks it up; the Tx2 just does not run now.
+	Embed *EmbedDeps
 }
 
 // ErrNoChanges is returned by Update when the caller supplies no field
@@ -76,7 +84,29 @@ func Update(ctx context.Context, db *sql.DB, id int64, p *UpdateParams) (*Entry,
 		setFrags = append(setFrags, colTitle)
 		args = append(args, *p.Title)
 	}
+	// Summary edit → flip vector_state='stale'. The Tx2 re-embed
+	// either runs now (Embed.Enabled) or is deferred to the next
+	// init-backfill pass. Detecting the change requires reading the
+	// current summary so we only flip state when the summary actually
+	// differs (pure metadata updates never invalidate a vector).
+	summaryChanged := false
 	if p.Summary != nil {
+		// Read current summary for change detection. One indexed
+		// lookup; cheaper than hashing + comparing content_hash.
+		var current string
+		if err := db.QueryRowContext(ctx,
+			`SELECT summary FROM entries WHERE id = ? AND project_id = ?`,
+			id, p.ProjectID,
+		).Scan(&current); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("%w: %s (project %s)",
+					ErrEntryNotFound, EntryID(id), p.ProjectID)
+			}
+			return nil, fmt.Errorf("lore: update: read current summary: %w", err)
+		}
+		if current != *p.Summary {
+			summaryChanged = true
+		}
 		setFrags = append(setFrags, colSummary)
 		args = append(args, *p.Summary)
 	}
@@ -114,6 +144,11 @@ func Update(ctx context.Context, db *sql.DB, id int64, p *UpdateParams) (*Entry,
 	setFrags = append(setFrags, colUpdatedAt)
 	args = append(args, now.Format(time.RFC3339))
 
+	if summaryChanged {
+		setFrags = append(setFrags, colVectorState)
+		args = append(args, string(VectorStateStale))
+	}
+
 	// Assemble the static pieces + the validated SET clause. Note:
 	// strings.Join of column-name CONSTANTS is not flagged by sqlcheck
 	// (no fmt.Sprintf, no binary +), and the values all flow through ?
@@ -137,7 +172,19 @@ func Update(ctx context.Context, db *sql.DB, id int64, p *UpdateParams) (*Entry,
 		return nil, fmt.Errorf("%w: %s (project %s)", ErrEntryNotFound, EntryID(id), p.ProjectID)
 	}
 
-	return loadEntry(ctx, db, id)
+	entry, err := loadEntry(ctx, db, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Queue a Tx2 re-embed when the summary changed. Uses the updated
+	// entry's summary rather than the params so a tag/status/kind
+	// tweak never triggers a vector write. Tx2 is a no-op when Embed
+	// is nil / disabled; init-backfill will pick up the 'stale' row.
+	if summaryChanged {
+		p.Embed.runTx2(ctx, db, entry.ID, entry.Summary)
+	}
+	return entry, nil
 }
 
 // colTitle and friends are the column-name constants the dynamic SET
@@ -145,13 +192,14 @@ func Update(ctx context.Context, db *sql.DB, id int64, p *UpdateParams) (*Entry,
 // to literals (see cmd/sqlcheck/analyzer.go: *ast.Ident with types.Const
 // resolves to safe).
 const (
-	colTitle     = "title = ?"
-	colSummary   = "summary = ?"
-	colTopic     = "topic = ?"
-	colTags      = "tags = ?"
-	colStatus    = "status = ?"
-	colKind      = "kind = ?"
-	colUpdatedAt = "updated_at = ?"
+	colTitle       = "title = ?"
+	colSummary     = "summary = ?"
+	colTopic       = "topic = ?"
+	colTags        = "tags = ?"
+	colStatus      = "status = ?"
+	colKind        = "kind = ?"
+	colUpdatedAt   = "updated_at = ?"
+	colVectorState = "vector_state = ?"
 )
 
 // updateQueryPrefix and updateQuerySuffix frame the caller-assembled

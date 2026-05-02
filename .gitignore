@@ -24,3 +24,15 @@ vendor/
 
 # Claude Code worktrees (transient agent-owned)
 .claude/
+
+# Model release cache (populated by `make assets-model` from a pinned
+# model-v<semver> GitHub Release; see docs/MODEL.md).
+/.cache/
+
+# Recipe build workspace (populated by recipe/quantize.py; intermediate
+# FP32 export plus the final int8 model.onnx).
+/workspace/
+
+# Python bytecode caches (recipe/ is the only py source tree).
+__pycache__/
+*.pyc

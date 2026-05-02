@@ -27,6 +27,11 @@ before:
     # Ensure modules are tidy before building. The go.sum must be committed;
     # this catches any drift.
     - go mod tidy
+    # Stage the per-platform ONNX Runtime shared libraries. model.onnx + vocab.txt
+    # must be staged before this step via the release workflow (see release.yml).
+    # assets-runtime downloads libonnxruntime for each platform from the ORT
+    # GitHub release; it skips files that are already present.
+    - make assets-runtime
 
 # ─── builds ──────────────────────────────────────────────────────────────────
 
@@ -43,8 +48,12 @@ builds:
     # -trimpath removes local build paths from the binary for reproducibility.
     # -s -w strips debug symbols and DWARF info to reduce binary size.
     # ldflags stamp version/commit/date injected by goreleaser templates.
+    # -tags=withembed bundles the ONNX Runtime + BGE model + vocab into the binary
+    # so users get semantic retrieval without a separate asset-extract step.
+    # The before.hooks above stage the per-platform assets before goreleaser builds.
     flags:
       - -trimpath
+      - -tags=withembed
     ldflags:
       - -s -w
       - -X main.version={{.Version}}

@@ -123,6 +123,18 @@ type Deps struct {
 	// never break a tool call. See internal/hints/engine.go for the
 	// reference implementation wired into Register().
 	EvaluateHints EvaluateHintsFunc
+	// Embed is the optional embedding-pipeline port. The field type is
+	// `any` so the command package does not import internal/lore (which
+	// would create a cycle: lore registers commands, command depends on
+	// lore). Handlers in internal/lore type-assert this to
+	// *lore.EmbedDeps via embedFromDeps(d). A nil value (the default)
+	// is the Phase-0 fallback: BM25+stopwords only, per ADR-003.
+	//
+	// Constructed by the adapter: internal/mcp startup (Async=true,
+	// warmed Index) and internal/cli bootstrap (Async=false, no Index).
+	// See internal/lore/embed_deps.go for the port definition and
+	// QUEST-213 for the wiring rationale.
+	Embed any
 }
 
 // Registrant is the erased-handle interface that lets a heterogeneous

@@ -4,7 +4,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -43,7 +45,11 @@ Next step — if you haven't yet:
   cd <your project> && guild init    scaffold AGENTS.md for this repo
 
 Then open the project in your agent and call
-mcp__guild__guild_session_start(project="<dir-name>").`,
+mcp__guild__guild_session_start(project="<dir-name>").
+
+Environment variables:
+
+  GUILD_NO_UPDATE_CHECK=1   disable the upgrade-available nudge on stderr`,
 	SilenceUsage: true,
 }
 
@@ -96,7 +102,41 @@ func SetMCPServeRunE(run func(*cobra.Command, []string) error) {
 	mcpServeCmd.RunE = run
 }
 
+// upgradeNudgeFn is the optional hook called by the PersistentPreRun on
+// every CLI invocation. cmd/guild/main.go injects the real implementation
+// via SetUpgradeNudge. When nil, no nudge is emitted (the default in tests
+// that import internal/cli without cmd/guild).
+var upgradeNudgeFn func() string
+
+// SetUpgradeNudge installs the upgrade-check function called on every CLI
+// command. fn must return a non-empty string when a newer release is
+// available, and "" otherwise. The function is called in PersistentPreRun
+// so it fires for every subcommand. Nudge output goes to stderr so that
+// stdout consumers (scripted pipelines) are never polluted.
+//
+// Exposed as a seam so cmd/guild can inject the real implementation (which
+// imports internal/release) without internal/cli depending on that package.
+func SetUpgradeNudge(fn func() string) {
+	upgradeNudgeFn = fn
+}
+
 func init() {
+	// PersistentPreRun fires before every subcommand. We use it to emit
+	// an upgrade-available nudge when a newer guild release exists and
+	// stderr is a TTY. The isatty check happens here (not in SetUpgradeNudge)
+	// so that cmd/guild can inject a context-free fn that returns just the string.
+	rootCmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
+		if upgradeNudgeFn == nil {
+			return
+		}
+		if !isatty.IsTerminal(os.Stderr.Fd()) && !isatty.IsCygwinTerminal(os.Stderr.Fd()) {
+			return
+		}
+		if msg := upgradeNudgeFn(); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+	}
+
 	// --no-emoji is a persistent global flag so every subcommand inherits
 	// it. config.flagLayer reads "no-emoji" from the merged FlagSet, so
 	// declaring it here (rootCmd.PersistentFlags) makes it available to

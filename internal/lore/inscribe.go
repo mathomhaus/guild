@@ -30,6 +30,15 @@ type InscribeParams struct {
 	NoWarn        bool      // suppress the ≤60-word principle warning
 	StrictProject bool      // opt-out of cross-project dedup (default: cross-project)
 	Now           time.Time // injectable for deterministic tests; zero → time.Now().UTC()
+
+	// Embed is the optional embeddings pipeline. When nil or not Enabled,
+	// Inscribe commits the row with vector_state='pending' (the schema
+	// default) and skips every vector-write step. When Enabled, Inscribe
+	// dispatches a Tx2 after the Tx1 commit per ADR-003 "Mutation semantics":
+	// async for MCP (Embed.Async=true) so inscribe latency stays flat, sync
+	// for CLI so the process can exit cleanly. Tx2 failures are logged and
+	// never surface as caller errors.
+	Embed *EmbedDeps
 }
 
 // InscribeResult carries the inserted Entry plus any dedup hits surfaced
@@ -40,6 +49,10 @@ type InscribeResult struct {
 	DedupHits   []DedupHit
 	BloatWarned bool // true if the ≤60-word principle rule fired
 	BloatWords  int  // word count that triggered the warning (0 if not warned)
+	// NearDupHint is non-empty when a recent entry with matching
+	// topic/tags/prompted_by exceeded the lexical-similarity threshold.
+	// The caller emits this as a 💡 hint line.
+	NearDupHint string
 }
 
 // DedupHit is one entry that the inscribe-time dedup heuristic flagged as
@@ -214,6 +227,14 @@ func Inscribe(ctx context.Context, db *sql.DB, p *InscribeParams) (*InscribeResu
 		return nil, fmt.Errorf("lore: inscribe: last insert id: %w", err)
 	}
 
+	// Every newly inscribed entry is active (seed or current; never archived
+	// or parked at insert time), so always increment the coverage denominator.
+	// This keeps vector_coverage_den in sync with the live active-entry count
+	// and prevents num > den drift (QUEST-220 / LORE-373).
+	if _, err := db.ExecContext(ctx, sqlBumpCoverageDen); err != nil {
+		return nil, fmt.Errorf("lore: inscribe: bump vector_coverage_den: %w", err)
+	}
+
 	entry := &Entry{
 		ID:          id,
 		ProjectID:   p.ProjectID,
@@ -242,11 +263,30 @@ func Inscribe(ctx context.Context, db *sql.DB, p *InscribeParams) (*InscribeResu
 		}
 	}
 
+	// Phase 1 vector write. No-op when Embed is nil / disabled; otherwise
+	// runs the Tx2 helper async (MCP) or sync (CLI) per ADR-003
+	// "Mutation semantics". Tx2 failures log-and-swallow so a broken
+	// embedder never blocks a successful inscribe.
+	p.Embed.runTx2(ctx, db, entry.ID, entry.Summary)
+
+	// Near-duplicate hint: check recent entries (<=14d) for lexical
+	// similarity on title tokens and summary trigrams. Best-effort only;
+	// a query failure suppresses the hint without blocking the return.
+	nearDupHint := ""
+	if ndCands, ndErr := findNearDupCandidates(ctx, db, p, id, now); ndErr == nil && len(ndCands) > 0 {
+		c := ndCands[0]
+		nearDupHint = fmt.Sprintf(
+			"looks similar to %s %q (%s). did you mean to update or link instead of inscribe new?",
+			formatEntryID(c.EntryID), c.Title, c.MatchReason,
+		)
+	}
+
 	return &InscribeResult{
 		Entry:       entry,
 		DedupHits:   hits,
 		BloatWarned: bloatWarned,
 		BloatWords:  bloatWords,
+		NearDupHint: nearDupHint,
 	}, nil
 }
 

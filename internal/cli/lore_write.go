@@ -169,5 +169,6 @@ func init() {
 	bindLoreRegistryVerb(loreCmd, lore.CatalogCommand, deps, "lore catalog")
 	bindLoreRegistryVerb(loreCmd, lore.SealCommand, deps, "lore seal")
 	bindLoreRegistryVerb(loreCmd, lore.LinkCommand, deps, "lore link")
+	bindLoreRegistryVerb(loreCmd, lore.UnlinkCommand, deps, "lore unlink")
 	bindLoreRegistryVerb(loreCmd, lore.ReforgeCommand, deps, "lore reforge")
 }

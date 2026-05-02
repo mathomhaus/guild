@@ -28,9 +28,15 @@ const (
 	// (lore_seal, lore_catalog, quest_epic, quest_active, quest_forfeit)
 	// now in the always-on tier. Raised to 4700 in QUEST-106 when
 	// quest_fulfill was added alongside quest_clear as a backward-compat
-	// alias — net +~100 tokens for the duplicate tool. Expected actual:
-	// ~4400-4600 tokens.
-	totalMaxTokens = 4700
+	// alias -- net +~100 tokens for the duplicate tool. Raised to 4900 in
+	// QUEST-211 (Phase 1.6 ADR-003) when lore_health and lore_embed_rebuild
+	// were added -- net +~182 tokens for the two embedder health tools.
+	// Raised to 5100 in QUEST-224 when quest_search was added -- net
+	// +~124 tokens for the BM25+vector quest search tool.
+	// Raised to 5300 in QUEST-243 when lore_unlink was added -- net
+	// +~154 tokens for the provenance edge removal tool.
+	// Expected actual: ~5106 tokens.
+	totalMaxTokens = 5300
 )
 
 // TestDescriptionBudget enforces the token budgets against the full

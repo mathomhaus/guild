@@ -86,7 +86,7 @@ func handleGuildStatus(
 	if err != nil {
 		return toolErrorf("%s", err), nil, nil
 	}
-	body := renderBounties(ctx, pid, in.BriefOnly)
+	body, _ := renderBounties(ctx, pid, in.BriefOnly)
 	if body == "" {
 		body = emptyBountiesSkeleton()
 	}

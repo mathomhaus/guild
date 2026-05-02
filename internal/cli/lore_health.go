@@ -575,4 +575,9 @@ func init() {
 	bindLoreRegistryVerb(loreCmd, lore.InquestCommand, deps, "lore inquest")
 	bindLoreRegistryVerb(loreCmd, lore.MeldCommand, deps, "lore meld")
 	bindLoreRegistryVerb(loreCmd, lore.CommuneCommand, deps, "lore commune")
+	// Embedder health and rebuild verbs (Phase 1.6 ADR-003).
+	bindLoreRegistryVerb(loreCmd, lore.EmbedderHealthCommand, deps, "lore health")
+	bindLoreRegistryVerb(loreCmd, lore.EmbedRebuildCommand, deps, "lore embed-rebuild")
+	// Coverage denominator reconcile (QUEST-220 / LORE-373).
+	bindLoreRegistryVerb(loreCmd, lore.CoverageReconcileCommand, deps, "lore coverage-reconcile")
 }

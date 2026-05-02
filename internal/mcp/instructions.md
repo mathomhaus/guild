@@ -189,6 +189,7 @@ The MCP host collapses tool results in chat — the user sees `Called guild (ctr
 - `lore_inscribe` → "📜 inscribed LORE-XXX: <short title>"
 - `lore_reforge` → "🔨 reforged LORE-OLD → LORE-NEW"
 - `lore_link` → "🔗 linked LORE-A informs LORE-B"
+- `lore_unlink` → "🔗 unlinked LORE-A informs LORE-B" (or "no matching edge" on idempotent call)
 - `quest_post` → "➕ posted QUEST-X: <subject>"
 - `quest_accept` → "⚔️ accepted QUEST-X"
 - `quest_clear` → "🏆 cleared QUEST-X — <one-line result>"
@@ -225,9 +226,13 @@ Use these shapes when you need a concrete schema:
   lore_seal(entry_id=34)
   lore_catalog(dir="/abs/path/docs")
   lore_link(from_id=34, to_id=56, relation="informs")
+  lore_unlink(from_id=34, to_id=56, relation="informs")
   lore_echoes()
   lore_whispers(topic="auth")
   lore_ripples(entry_id=34, depth=3, direction="out")
+  lore_health()
+  lore_embed_rebuild()
+  lore_coverage_reconcile()
   quest_post(subject="Add retry budget", priority="P1", files="internal/retry/retry.go", acceptance="tests pass || jitter documented")
   quest_update(quest_id="QUEST-7", depends_on="QUEST-6")
   quest_accept(quest_id="QUEST-7")
@@ -245,6 +250,7 @@ Use these shapes when you need a concrete schema:
   quest_summon(quest_id="QUEST-7", to="other-agent")
   quest_orders(agent="other-agent")
   quest_guild()
+  quest_search(query="implement BM25 retrieval")
 
 ## What NOT to do
 

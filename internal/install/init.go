@@ -9,14 +9,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/mathomhaus/guild/internal/lore"
+	"github.com/mathomhaus/guild/internal/lore/embed"
 	"github.com/mathomhaus/guild/internal/quest"
 	"github.com/mathomhaus/guild/internal/storage"
 	"github.com/mattn/go-isatty"
@@ -245,6 +248,13 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 	result.DBRegistered = true
 	fmt.Fprintf(opts.Out, "  ✓ registered %q in lore + quest\n", projectName)
 
+	// --- Embedder bring-up -----------------------------------------------------
+	// Extract the go:embed runtime, probe it against the pinned reference,
+	// seed meta, and (on enable) run the serial backfill. init exits 0
+	// regardless of the embedder outcome; a failure path just lands
+	// meta.embedder_state='disabled' with a structured reason.
+	runEmbedderInit(ctx, loreDB, opts.Out)
+
 	// --- AGENTS.md -------------------------------------------------------------
 	switch agentsAction {
 	case agentsCreate:
@@ -437,4 +447,168 @@ func isInteractiveTTY(r io.Reader) bool {
 // Used by init_cmd.go to auto-switch to --yes mode when piped.
 func IsInteractiveTTYStdin() bool {
 	return isInteractiveTTY(os.Stdin)
+}
+
+// shaShort returns the first 12 hex characters of a SHA-256 digest for
+// human-readable output. Full-length SHAs are emitted in structured slog
+// fields; stdout carries only the prefix to stay compact (LORE-368).
+func shaShort(hex string) string {
+	if len(hex) <= 12 {
+		return hex
+	}
+	return hex[:12]
+}
+
+// printEmbedderOutcome writes the human-readable and structured-slog
+// diagnostic lines for an embedder bring-up outcome (LORE-368).
+//
+// Human stdout format (deterministic order: state -> timings -> cosine -> fingerprints):
+//
+//	success: one compact line (cosine, extract ms, probe ms)
+//	failure: state line + timings line + cosine line + sha/identity lines (probe-failure only)
+//
+// Slog fields emitted here (stable names; see InitOutcome comment for full list):
+//
+//	probe_cosine_observed, probe_cosine_floor,
+//	extract_duration_ms_dylib, extract_duration_ms_model,
+//	extract_duration_ms_vocab, extract_duration_ms_total,
+//	probe_duration_ms, extracted_dylib_sha256, extracted_model_sha256,
+//	extracted_vocab_sha256, model_id, tokenizer_hash.
+func printEmbedderOutcome(out io.Writer, logger *slog.Logger, outcome embed.InitOutcome) {
+	switch outcome.State {
+	case "enabled":
+		fmt.Fprintf(out, "  ✓ embedder enabled (cosine=%.4f, extract=%dms, probe=%dms)\n",
+			outcome.ProbeCosine,
+			outcome.ExtractDuration.Milliseconds(),
+			outcome.ProbeDuration.Milliseconds(),
+		)
+		logger.Info("embedder init complete",
+			slog.String("state", "enabled"),
+			slog.Float64("probe_cosine_observed", outcome.ProbeCosine),
+			slog.Float64("probe_cosine_floor", outcome.ProbeFloor),
+			slog.Int64("extract_duration_ms_dylib", outcome.DylibExtractDuration.Milliseconds()),
+			slog.Int64("extract_duration_ms_model", outcome.ModelExtractDuration.Milliseconds()),
+			slog.Int64("extract_duration_ms_vocab", outcome.VocabExtractDuration.Milliseconds()),
+			slog.Int64("extract_duration_ms_total", outcome.ExtractDuration.Milliseconds()),
+			slog.Int64("probe_duration_ms", outcome.ProbeDuration.Milliseconds()),
+			slog.String("model_id", outcome.Identity.ModelID),
+			slog.String("tokenizer_hash", outcome.Identity.TokenizerHash),
+		)
+	default:
+		fmt.Fprintf(out, "  [i] embedder disabled (reason=%s); BM25-only retrieval will be used\n", outcome.Reason)
+		// On probe failure, emit a triage block so the operator can
+		// diagnose without re-running. Deterministic order: timings ->
+		// cosine -> fingerprints (LORE-368).
+		if outcome.Reason == "probe_mismatch" || outcome.Reason == "probe_error" {
+			fmt.Fprintf(out, "      extract=%dms (dylib=%dms, model=%dms, vocab=%dms), probe=%dms\n",
+				outcome.ExtractDuration.Milliseconds(),
+				outcome.DylibExtractDuration.Milliseconds(),
+				outcome.ModelExtractDuration.Milliseconds(),
+				outcome.VocabExtractDuration.Milliseconds(),
+				outcome.ProbeDuration.Milliseconds(),
+			)
+			fmt.Fprintf(out, "      cosine observed=%.6f floor=%.6f\n",
+				outcome.ProbeCosine, outcome.ProbeFloor,
+			)
+			if outcome.DylibSHA256 != "" {
+				fmt.Fprintf(out, "      sha256: dylib=%s model=%s vocab=%s\n",
+					shaShort(outcome.DylibSHA256),
+					shaShort(outcome.ModelSHA256),
+					shaShort(outcome.VocabSHA256),
+				)
+			}
+			if outcome.Identity.ModelID != "" {
+				fmt.Fprintf(out, "      model_id=%s tokenizer_hash=%s\n",
+					outcome.Identity.ModelID,
+					outcome.Identity.TokenizerHash,
+				)
+			}
+		}
+		logger.Warn("embedder init complete",
+			slog.String("state", "disabled"),
+			slog.String("reason", outcome.Reason),
+			slog.Float64("probe_cosine_observed", outcome.ProbeCosine),
+			slog.Float64("probe_cosine_floor", outcome.ProbeFloor),
+			slog.Int64("extract_duration_ms_dylib", outcome.DylibExtractDuration.Milliseconds()),
+			slog.Int64("extract_duration_ms_model", outcome.ModelExtractDuration.Milliseconds()),
+			slog.Int64("extract_duration_ms_vocab", outcome.VocabExtractDuration.Milliseconds()),
+			slog.Int64("extract_duration_ms_total", outcome.ExtractDuration.Milliseconds()),
+			slog.Int64("probe_duration_ms", outcome.ProbeDuration.Milliseconds()),
+			slog.String("extracted_dylib_sha256", outcome.DylibSHA256),
+			slog.String("extracted_model_sha256", outcome.ModelSHA256),
+			slog.String("extracted_vocab_sha256", outcome.VocabSHA256),
+			slog.String("model_id", outcome.Identity.ModelID),
+			slog.String("tokenizer_hash", outcome.Identity.TokenizerHash),
+		)
+	}
+}
+
+// runEmbedderInit drives the ADR-003 Phase 1.5 embedder bring-up
+// against loreDB and writes the resulting meta rows. On enable, it
+// also runs the serial backfill. On every outcome it emits a one-line
+// summary to out so the user sees what happened without mousing over a
+// collapsed MCP response.
+//
+// Never returns an error: ADR-003 mandates `guild init` exits 0
+// regardless of embedder state. Callers just invoke this and move on.
+func runEmbedderInit(ctx context.Context, loreDB *sql.DB, out io.Writer) {
+	// slog target is io.Discard by default so the init transcript stays
+	// clean; production diagnostic lines land via structured fields any
+	// caller that wires a real handler will see. Swap Default() to a
+	// text-to-stderr handler when debugging.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Identity-upgrade check: if the stored model_id differs from the
+	// binary's bound one, invalidate every vector before proceeding.
+	bound := embed.CurrentManifest().Identity
+	stored := embed.ManifestIdentity{}
+	if id, hash, _, err := embed.ReadMeta(ctx, loreDB); err == nil {
+		stored.ModelID = id
+		stored.TokenizerHash = hash
+	}
+	if embed.IdentityChanged(stored, bound) {
+		fmt.Fprintln(out, "  [!] embedder model changed. Stop all running guild MCP servers before continuing.")
+		if err := embed.Invalidate(ctx, loreDB, embed.LoreCorpus{}, bound); err != nil {
+			fmt.Fprintf(out, "  [!] embedder invalidate failed: %s\n", err)
+			return
+		}
+	}
+
+	prep, outcome := embed.PrepareAndProbe(ctx, logger)
+	if prep != nil {
+		defer prep.Close()
+	}
+	if werr := embed.WriteMeta(ctx, logger, loreDB, outcome); werr != nil {
+		fmt.Fprintf(out, "  [!] embedder write-meta failed: %s\n", werr)
+		return
+	}
+	printEmbedderOutcome(out, logger, outcome)
+	if outcome.State != "enabled" {
+		return
+	}
+
+	// Backfill: only runs when the probe passed and we have a real
+	// embedder. Skips silently when pending=0.
+	res, err := embed.Backfill(ctx, embed.BackfillOptions{
+		DB:                loreDB,
+		Corpus:            embed.LoreCorpus{},
+		Embedder:          prep.Embedder,
+		ModelID:           outcome.Identity.ModelID,
+		ProgressOut:       out,
+		ProgressThreshold: 100,
+		ProgressEvery:     25,
+	})
+	if err != nil {
+		fmt.Fprintf(out, "  [!] embedder backfill error: %s\n", err)
+		return
+	}
+	if res.Total == 0 {
+		fmt.Fprintln(out, "  ✓ embedder backfill: 0 pending (up to date)")
+		return
+	}
+	fmt.Fprintf(out, "  ✓ embedder backfill: %d/%d entries embedded (failed=%d, duration=%s, epoch=%d)\n",
+		res.Embedded, res.Total, res.Failed,
+		res.Duration.Round(1_000_000),
+		res.Epoch,
+	)
 }

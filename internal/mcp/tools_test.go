@@ -34,6 +34,7 @@ var expectedTools = []struct {
 	{"lore_inquest"},
 	{"lore_inscribe"},
 	{"lore_link"},
+	{"lore_unlink"},
 	{"lore_list"},
 	{"lore_meld"},
 	{"lore_oath"},
@@ -62,6 +63,13 @@ var expectedTools = []struct {
 	{"lore_echoes"},
 	{"lore_whispers"},
 	{"lore_ripples"},
+	// Embedder health tools (Phase 1.6 ADR-003, QUEST-211).
+	{"lore_health"},
+	{"lore_embed_rebuild"},
+	// Coverage denominator reconcile (QUEST-220 / LORE-373).
+	{"lore_coverage_reconcile"},
+	// Quest full-text + vector search (QUEST-224 / LORE-377).
+	{"quest_search"},
 }
 
 // isolateProject sets up a fresh $HOME, registers an active project,
@@ -592,7 +600,7 @@ func TestSessionStartNoStub(t *testing.T) {
 	}
 	// Body must at least include the active-project narration AND
 	// either briefing/oath/top-task structure or the graceful fallback.
-	if !strings.Contains(body, "active project set") {
+	if !strings.Contains(body, "active project:") {
 		t.Errorf("missing narration header: %q", body)
 	}
 	// Either of these indicates the Bounties wiring ran: actual payload
@@ -702,6 +710,8 @@ func minArgsFor(name string) map[string]any {
 		return map[string]any{"dir": "/tmp/none"}
 	case "lore_link":
 		return map[string]any{"from_id": 1, "to_id": 2}
+	case "lore_unlink":
+		return map[string]any{"from_id": 1, "to_id": 2}
 	case "lore_ripples":
 		return map[string]any{"entry_id": "1"}
 	case "quest_post":
@@ -732,6 +742,8 @@ func minArgsFor(name string) map[string]any {
 		return map[string]any{}
 	case "quest_update":
 		return map[string]any{"quest_id": "QUEST-1"}
+	case "quest_search":
+		return map[string]any{"query": "x"}
 	default:
 		return map[string]any{}
 	}
@@ -777,11 +789,19 @@ func smokeArgsFor(name string) map[string]any {
 		return map[string]any{"dir": "/tmp/guild-no-such-dir-xyz", "project": "testproj"}
 	case "lore_link":
 		return map[string]any{"from_id": 999998, "to_id": 999999, "project": "testproj"}
+	case "lore_unlink":
+		return map[string]any{"from_id": 999998, "to_id": 999999, "project": "testproj"}
 	case "lore_inquest":
 		return base
 	case "lore_meld":
 		return base
 	case "lore_commune":
+		return base
+	case "lore_health":
+		return base
+	case "lore_embed_rebuild":
+		return base
+	case "lore_coverage_reconcile":
 		return base
 	case "lore_ripples":
 		return map[string]any{"entry_id": "999999", "project": "testproj"}
@@ -837,6 +857,8 @@ func smokeArgsFor(name string) map[string]any {
 			"quest_id": "QUEST-99999", "subject": "updated",
 			"project": "testproj",
 		}
+	case "quest_search":
+		return map[string]any{"query": "smoke search", "project": "testproj"}
 	default:
 		return base
 	}

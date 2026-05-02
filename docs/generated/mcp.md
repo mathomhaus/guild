@@ -2,7 +2,7 @@
 
 # guild MCP tool catalog
 
-Every tool a registered MCP client sees. 38 tools.
+Every tool a registered MCP client sees. 43 tools.
 
 ## Tools
 
@@ -12,8 +12,11 @@ Every tool a registered MCP client sees. 38 tools.
 - [`lore_appraise`](#lore_appraise) — Search lore before storing new knowledge or spawning research subagents.
 - [`lore_catalog`](#lore_catalog) — Bulk-import .md files under DIR as lore entries.
 - [`lore_commune`](#lore_commune) — Health report for oath bloat and duplicate lore.
+- [`lore_coverage_reconcile`](#lore_coverage_reconcile) — Reset meta.vector_coverage_den to the live COUNT(*) WHERE status NOT IN ('archived','parked') and report before/after values.
 - [`lore_dossier`](#lore_dossier) — Compile ~2000-token project context for subagent spawn prompts.
 - [`lore_echoes`](#lore_echoes) — List stale/decayed entries the next agent should review or reforge.
+- [`lore_embed_rebuild`](#lore_embed_rebuild) — Delete all lore_vectors rows for the active project, flip every active entry's vector_state to 'pending', then encode each entry and insert the resulting int8 vectors.
+- [`lore_health`](#lore_health) — Print the embedder health section: model_id, tokenizer_hash, runtime_version, dim, coverage (num/den and percent), pending count, stale count, last encode error (if any), last successful encode timestamp, and rolling embed_error_count.
 - [`lore_inquest`](#lore_inquest) — Audit the oath wall for narrative-bloat principles (>60 words).
 - [`lore_inscribe`](#lore_inscribe) — Store knowledge that transcends the current task — patterns, decisions, research that outlive the quest.
 - [`lore_link`](#lore_link) — Create an informs provenance edge between two entries.
@@ -24,6 +27,7 @@ Every tool a registered MCP client sees. 38 tools.
 - [`lore_ripples`](#lore_ripples) — Walk the provenance graph from a seed entry via entry_links.
 - [`lore_seal`](#lore_seal) — Seal (archive) an entry from active circulation.
 - [`lore_study`](#lore_study) — Get full detail of one entry: summary, metadata, linked entries.
+- [`lore_unlink`](#lore_unlink) — Remove an informs (or supersedes/contradicts) edge from the provenance graph.
 - [`lore_update`](#lore_update) — Edit an entry's title, status, tags, kind, topic, or summary.
 - [`lore_whispers`](#lore_whispers) — List lore entries in the idea pipeline — entries with kind=idea and an early status.
 - [`quest_accept`](#quest_accept) — Atomically claim a quest so two agents do not take the same work, then return the current spec and recent state.
@@ -42,6 +46,7 @@ Every tool a registered MCP client sees. 38 tools.
 - [`quest_post`](#quest_post) — Create a quest another agent can accept without human follow-up — well-specced quest = no human follow-up needed to execute it.
 - [`quest_pulse`](#quest_pulse) — Rework rate, churn rate, hot files, untested quests.
 - [`quest_scroll`](#quest_scroll) — Full quest history: status, journal, timeline.
+- [`quest_search`](#quest_search) — BM25+stopwords full-text search over quest subjects and spec notes.
 - [`quest_summon`](#quest_summon) — Reassign a quest to a named teammate agent.
 - [`quest_update`](#quest_update) — Modify a quest's spec after post.
 
@@ -234,6 +239,28 @@ _no arguments_
 
 </details>
 
+## `lore_coverage_reconcile`
+
+Reset meta.vector_coverage_den to the live COUNT(*) WHERE status NOT IN ('archived','parked') and report before/after values. Corrects num > den drift that produces coverage > 100%. Backfill also runs this automatically, so this command is a manual escape hatch.
+
+_no arguments_
+
+<details><summary>Raw JSON schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
 ## `lore_dossier`
 
 Compile ~2000-token project context for subagent spawn prompts. Use when delegating multi-file work.
@@ -272,6 +299,50 @@ _no arguments_
       "description": "also flag entries whose file_path was modified after creation",
       "type": "boolean"
     },
+    "project": {
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+## `lore_embed_rebuild`
+
+Delete all lore_vectors rows for the active project, flip every active entry's vector_state to 'pending', then encode each entry and insert the resulting int8 vectors. Safe under concurrent MCP servers: uses BEGIN IMMEDIATE for the reset phase and INSERT OR IGNORE for each vector write (ADR-003 invariants).
+
+_no arguments_
+
+<details><summary>Raw JSON schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+## `lore_health`
+
+Print the embedder health section: model_id, tokenizer_hash, runtime_version, dim, coverage (num/den and percent), pending count, stale count, last encode error (if any), last successful encode timestamp, and rolling embed_error_count.
+
+_no arguments_
+
+<details><summary>Raw JSON schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
     "project": {
       "type": "string"
     }
@@ -666,6 +737,52 @@ _no arguments_
   },
   "required": [
     "entry_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+## `lore_unlink`
+
+Remove an informs (or supersedes/contradicts) edge from the provenance graph. Idempotent: removing a non-existent edge returns success with a 'no matching edge' note.
+
+_no arguments_
+
+<details><summary>Raw JSON schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "from_id": {
+      "description": "source entry id",
+      "pattern": "^-?[0-9]+$",
+      "type": [
+        "integer",
+        "string"
+      ]
+    },
+    "project": {
+      "type": "string"
+    },
+    "relation": {
+      "description": "informs|supersedes|contradicts (default informs)",
+      "type": "string"
+    },
+    "to_id": {
+      "description": "target entry id (the one that was being informed by from)",
+      "pattern": "^-?[0-9]+$",
+      "type": [
+        "integer",
+        "string"
+      ]
+    }
+  },
+  "required": [
+    "from_id",
+    "to_id"
   ],
   "type": "object"
 }
@@ -1304,6 +1421,39 @@ _no arguments_
   },
   "required": [
     "quest_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+## `quest_search`
+
+BM25+stopwords full-text search over quest subjects and spec notes. When quest vector coverage >= 90%, adds a semantic arm and RRF-fuses (k=60, same gate and fusion as lore_appraise). Returns up to 10 results. Replaces quest list --all | grep.
+
+_no arguments_
+
+<details><summary>Raw JSON schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "description": "max results (default 10)",
+      "type": "integer"
+    },
+    "project": {
+      "type": "string"
+    },
+    "query": {
+      "description": "natural-language search query",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
   ],
   "type": "object"
 }

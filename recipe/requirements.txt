@@ -1,0 +1,19 @@
+# recipe/requirements.txt
+#
+# Pinned dependencies for the model-build workflow. Bumping any of
+# these is a deliberate maintainer action: a push on recipe/** triggers
+# .github/workflows/build-model.yml, which rebuilds the int8 ONNX model
+# and publishes a new model-v<semver> GitHub Release.
+#
+# Versions chosen to be recent stable releases as of 2026-Q2. The
+# optimum/onnxruntime pair is the load-bearing pin; transformers and
+# huggingface_hub are pulled in transitively but pinned here so a
+# deterministic recipe run produces a deterministic model artifact.
+#
+# To regenerate the lockfile-style versions after a bump, see the
+# header comment in recipe/quantize.py.
+
+optimum==2.1.0
+optimum-onnx==0.1.0
+onnxruntime==1.25.0
+transformers==4.57.6

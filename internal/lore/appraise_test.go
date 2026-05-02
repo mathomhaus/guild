@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/lore/embed"
 )
 
 func TestAppraise_EmptyQuery(t *testing.T) {
@@ -339,6 +341,82 @@ func TestAppraise_PerQueryWeightOverride(t *testing.T) {
 	if outRecency.Results[0].Entry.ID != freshID {
 		t.Fatalf("recency-heavy weights: got top ID %d, want fresh %d (%v)",
 			outRecency.Results[0].Entry.ID, freshID, outRecency.Results)
+	}
+}
+
+// TestAppraise_CrossProjectNoCap verifies LORE-374 / LORE-371: when the
+// RRF path is active (embedder enabled, coverage satisfied) and one
+// project genuinely dominates for a query, all top-N results come from
+// that project rather than one-per-project samples.
+//
+// The old design ran per-project BM25+vector pairs and merged them via
+// FuseMany. Because every project's rank-1 entry received an equal RRF
+// score (1/(k+1)), the final top-N distributed roughly one slot per
+// project regardless of how many matching entries a single project had.
+// The fix replaces the per-project loop with a single global BM25 query
+// and a single global vector TopK, fused together, so the scores reflect
+// actual global relevance.
+func TestAppraise_CrossProjectNoCap(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// "dominant" has 5 entries all matching "frobnitz primary".
+	// Four noise projects each have 1 entry also matching "frobnitz",
+	// so they compete in BM25. Before the fix, each of the 5 projects
+	// would claim one slot in the top-5, leaving dominant with at most 1.
+	seedCorpus(t, ctx, db, []fixtureEntry{
+		{"dominant", "research", "frobnitz protocol alpha primary", "s", "frobnitz"},
+		{"dominant", "research", "frobnitz protocol beta primary", "s", "frobnitz"},
+		{"dominant", "research", "frobnitz protocol gamma primary", "s", "frobnitz"},
+		{"dominant", "research", "frobnitz protocol delta primary", "s", "frobnitz"},
+		{"dominant", "research", "frobnitz protocol epsilon primary", "s", "frobnitz"},
+		{"noise1", "research", "frobnitz noise one entry", "s", "frobnitz"},
+		{"noise2", "research", "frobnitz noise two entry", "s", "frobnitz"},
+		{"noise3", "research", "frobnitz noise three entry", "s", "frobnitz"},
+		{"noise4", "research", "frobnitz noise four entry", "s", "frobnitz"},
+	})
+
+	// Activate the RRF cross-project path: embedder_state=enabled and
+	// coverage 1/1=100%. DeterministicEmbedder returns non-nil vectors
+	// so Embed() succeeds. Index=nil: no vector arm, so ranking is
+	// BM25-only via RRF, which is sufficient to assert global domination.
+	for _, kv := range []struct{ k, v string }{
+		{"embedder_state", "enabled"},
+		{"vector_coverage_num", "1"},
+		{"vector_coverage_den", "1"},
+	} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO meta (key, value) VALUES (?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			kv.k, kv.v,
+		); err != nil {
+			t.Fatalf("seed meta %s: %v", kv.k, err)
+		}
+	}
+
+	embedDeps := &EmbedDeps{
+		Embedder: embed.NewDeterministicEmbedder(),
+		ModelID:  "test-model",
+	}
+
+	out, err := Appraise(ctx, db, AppraiseParams{
+		Query:       "frobnitz primary",
+		AllProjects: true,
+		Limit:       5,
+		Now:         time.Now().UTC(),
+		Embed:       embedDeps,
+	})
+	if err != nil {
+		t.Fatalf("appraise: %v", err)
+	}
+	if len(out.Results) != 5 {
+		t.Fatalf("want 5 results, got %d", len(out.Results))
+	}
+	for i, r := range out.Results {
+		if r.Entry.ProjectID != "dominant" {
+			t.Errorf("result[%d]: project=%q, want dominant (one-per-project sampling was not removed)", i, r.Entry.ProjectID)
+		}
 	}
 }
 

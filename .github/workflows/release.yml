@@ -75,6 +75,31 @@ jobs:
         with:
           cosign-release: 'v2.4.3'
 
+      # Stage the model + vocab for all platforms. The pinned model release
+      # tag lives in .model-version at the repo root; this step downloads
+      # the corresponding model-v<semver> GitHub Release assets via gh CLI
+      # using the default GITHUB_TOKEN (Contents:read on same-repo releases
+      # is sufficient, no new secret needed). assets-model picks up the
+      # staged files via ASSETS_SPIKE_DIR and copies them per-platform.
+      # See .github/workflows/build-model.yml for how the model release is
+      # produced and recipe/README.md for the broader two-workflow pattern.
+      # The ORT shared libraries are downloaded by goreleaser's before.hooks
+      # (make assets-runtime) from the ORT GitHub release; no secret needed for them.
+      - name: Stage model assets from pinned release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '[:space:]' < .model-version)
+          mkdir -p workspace/staging
+          gh release download "model-v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern model.onnx \
+            --pattern vocab.txt \
+            --pattern tokenizer.json \
+            --dir workspace/staging
+          ASSETS_SPIKE_DIR=workspace/staging make assets-model
+
       # goreleaser-action v6 supports goreleaser v2 natively.
       # CGO_ENABLED=0 is set in .goreleaser.yml; repeating it here is
       # belt-and-suspenders to make the intent explicit in CI logs.

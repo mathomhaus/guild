@@ -81,6 +81,7 @@ var InscribeCommand = &command.Command[InscribeInput, InscribeCmdOutput]{
 			NeedsReview:   in.NeedsReview,
 			NoWarn:        in.NoWarn,
 			StrictProject: in.StrictProject,
+			Embed:         embedFromDeps(ctx, d),
 		})
 		if err != nil {
 			return InscribeCmdOutput{}, err
@@ -123,13 +124,13 @@ func formatInscribedBody(s lineSink, o InscribeCmdOutput) string {
 		fmt.Sprintf("inscribed %s: %s [%s]", formatEntryID(res.Entry.ID), res.Entry.Title, res.Entry.Kind)), "\n")
 }
 
-// formatInscribedWarnings renders dedup hits and bloat notices for the
-// CLI surface only. The result is written to stderr by the CLI adapter so
-// warnings don't contaminate stdout and don't cause exit non-zero.
-// Returns "" when there is nothing to warn about.
+// formatInscribedWarnings renders dedup hits, bloat notices, and the
+// near-duplicate hint for the CLI surface only. The result is written to
+// stderr by the CLI adapter so warnings don't contaminate stdout and don't
+// cause exit non-zero. Returns "" when there is nothing to warn about.
 func formatInscribedWarnings(s command.CLISink, o InscribeCmdOutput) string {
 	res := o.Result
-	if len(res.DedupHits) == 0 && !res.BloatWarned {
+	if len(res.DedupHits) == 0 && !res.BloatWarned && res.NearDupHint == "" {
 		return ""
 	}
 	var b strings.Builder
@@ -147,12 +148,15 @@ func formatInscribedWarnings(s command.CLISink, o InscribeCmdOutput) string {
 			PrincipleMaxWordsDefault, res.BloatWords)
 		fmt.Fprintf(&b, "  remedy: lore_update(entry_id=%d, kind=\"decision\")\n", res.Entry.ID)
 	}
+	if res.NearDupHint != "" {
+		b.WriteString(strings.TrimRight(s.Line("💡", "[hint]", res.NearDupHint), "\n") + "\n")
+	}
 	return b.String()
 }
 
 // formatInscribedMCP renders the full inscribe result for MCP clients:
-// the success line plus any warnings inlined into the structured body.
-// MCP has no separate stderr channel so warnings stay in the body.
+// the success line plus any warnings and hints inlined into the structured
+// body. MCP has no separate stderr channel so warnings stay in the body.
 func formatInscribedMCP(s command.MCPSink, o InscribeCmdOutput) string {
 	res := o.Result
 	var b strings.Builder
@@ -171,6 +175,9 @@ func formatInscribedMCP(s command.MCPSink, o InscribeCmdOutput) string {
 		fmt.Fprintf(&b, "⚠️  principle exceeds %d-word oath hygiene (%d words) — consider kind=decision\n",
 			PrincipleMaxWordsDefault, res.BloatWords)
 		fmt.Fprintf(&b, "  remedy: lore_update(entry_id=%d, kind=\"decision\")\n", res.Entry.ID)
+	}
+	if res.NearDupHint != "" {
+		b.WriteString(s.Line("💡", "[hint]", res.NearDupHint))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

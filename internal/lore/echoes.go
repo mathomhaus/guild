@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,6 +46,14 @@ func Echoes(ctx context.Context, db *sql.DB, project string, gitAware bool) ([]E
 	defer func() { _ = rows.Close() }()
 
 	now := time.Now().UTC()
+	// Per-batch repo-root cache. Without it defaultGitFileLastModified
+	// shells out to `git rev-parse --show-toplevel` once per entry, so a
+	// list of N entries in the same repo costs 2N subprocess spawns
+	// instead of N+1. The resolver lives only for this Echoes call so
+	// state cannot leak between batches or across repos.
+	if gitAware {
+		ctx = withRepoRootResolver(ctx, newRepoRootResolver())
+	}
 	var stale []Echo
 	for rows.Next() {
 		e := &Entry{}
@@ -104,16 +113,14 @@ func defaultGitFileLastModified(ctx context.Context, path string) time.Time {
 
 	// Derive the repository root from the file's own directory so the
 	// query is never sensitive to the guild process's ambient CWD.
+	// Use the per-batch resolver if Echoes installed one, otherwise
+	// fall back to a one-shot subprocess (preserves single-call usage).
 	dir := filepath.Dir(path)
-	//nolint:gosec // arguments are hard-coded + file path from DB
-	repoRootCmd := exec.CommandContext(cmdCtx, "git", "rev-parse", "--show-toplevel")
-	repoRootCmd.Dir = dir
-	repoRootOut, err := repoRootCmd.Output()
-	if err != nil {
+	repoRoot := resolveRepoRoot(cmdCtx, dir)
+	if repoRoot == "" {
 		// git missing, not a repo, or dir doesn't exist — degrade quietly.
 		return time.Time{}
 	}
-	repoRoot := strings.TrimSpace(string(repoRootOut))
 
 	//nolint:gosec // arguments are hard-coded + file path from DB
 	cmd := exec.CommandContext(cmdCtx, "git", "log", "-1", "--format=%aI", "--", path)
@@ -127,4 +134,78 @@ func defaultGitFileLastModified(ctx context.Context, path string) time.Time {
 		return time.Time{}
 	}
 	return parseSQLiteTime(s)
+}
+
+// repoRootResolver memoizes `git rev-parse --show-toplevel` results
+// across calls within a single Echoes() pass. Without it a list of N
+// entries in the same repo costs 2N subprocess spawns instead of N+1.
+//
+// The lookup function is injected so tests can verify the cache
+// behaviour without invoking real git or a real filesystem.
+type repoRootResolver struct {
+	mu     sync.Mutex
+	cache  map[string]string // dir -> repo root, "" when dir is not in a repo
+	lookup func(ctx context.Context, dir string) string
+}
+
+func newRepoRootResolver() *repoRootResolver {
+	return &repoRootResolver{
+		cache:  map[string]string{},
+		lookup: defaultRepoRootLookup,
+	}
+}
+
+// Resolve returns the git repo root for dir, using the injected
+// lookup the first time and a cached value on subsequent calls.
+// An empty string is itself a cache entry, so a non-repo directory
+// only spawns one subprocess across the batch.
+func (r *repoRootResolver) Resolve(ctx context.Context, dir string) string {
+	r.mu.Lock()
+	if cached, ok := r.cache[dir]; ok {
+		r.mu.Unlock()
+		return cached
+	}
+	r.mu.Unlock()
+
+	root := r.lookup(ctx, dir)
+
+	r.mu.Lock()
+	r.cache[dir] = root
+	r.mu.Unlock()
+	return root
+}
+
+// defaultRepoRootLookup is the production implementation: shell out to
+// `git rev-parse --show-toplevel` with the directory as the cwd.
+// Returns "" on any error so the caller can degrade quietly.
+func defaultRepoRootLookup(ctx context.Context, dir string) string {
+	//nolint:gosec // arguments are hard-coded + dir is derived from a DB-stored file path
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+type repoRootResolverKey struct{}
+
+// withRepoRootResolver attaches a per-batch resolver to ctx. Echoes
+// installs one before iterating its row cursor; resolveRepoRoot picks
+// it up from the same ctx (or any derived ctx, including the timeout
+// ctx defaultGitFileLastModified creates).
+func withRepoRootResolver(ctx context.Context, r *repoRootResolver) context.Context {
+	return context.WithValue(ctx, repoRootResolverKey{}, r)
+}
+
+// resolveRepoRoot returns the git repo root for dir using the cached
+// resolver attached to ctx, or a one-shot lookup if no resolver is
+// installed. The fall-back keeps callers other than Echoes (and the
+// existing direct unit tests) working without changes.
+func resolveRepoRoot(ctx context.Context, dir string) string {
+	if r, ok := ctx.Value(repoRootResolverKey{}).(*repoRootResolver); ok && r != nil {
+		return r.Resolve(ctx, dir)
+	}
+	return defaultRepoRootLookup(ctx, dir)
 }

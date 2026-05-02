@@ -1,0 +1,182 @@
+# .github/workflows/build-model.yml
+#
+# Produces the int8 ONNX model that the binary release workflow embeds.
+# Decoupled from release.yml: model production is rare (Python-heavy,
+# ~127 MB download, recipe pinned), binary release is frequent (every
+# tag, pure Go + curl).
+#
+# Triggers:
+#   workflow_dispatch  manual run with optional 'version' input
+#                      (default: bump patch in .model-version)
+#   push paths recipe/**
+#                      auto-rebuild when the recipe or pinned deps
+#                      change
+#   schedule cron      quarterly auto-rebuild on the 1st of every
+#                      3rd month UTC; catches upstream BAAI changes
+#                      and verifies the recipe still produces a
+#                      healthy artifact
+#
+# Output: a 'model-v<semver>' GitHub Release with model.onnx, vocab.txt,
+# tokenizer.json, and MANIFEST.txt as assets. Marked pre-release so it
+# does not become 'latest'.
+#
+# No new secrets. GITHUB_TOKEN has Contents:write on the same repo by
+# default and that is sufficient for `gh release create`.
+
+name: build-model
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver tag for the model release (e.g. 1.0.0). If empty, bumps patch in .model-version.'
+        required: false
+        type: string
+        default: ''
+  push:
+    paths:
+      - 'recipe/**'
+  schedule:
+    # 00:00 UTC on the 1st of every 3rd month (Jan, Apr, Jul, Oct).
+    - cron: '0 0 1 */3 *'
+
+permissions:
+  contents: write   # gh release create + upload assets
+
+jobs:
+  build-model:
+    name: build int8 ONNX model
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Pinned: matches recipe/requirements.txt expectations.
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: recipe/requirements.txt
+
+      - name: Install recipe dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r recipe/requirements.txt
+
+      - name: Run quantize recipe
+        run: python recipe/quantize.py
+
+      - name: Determine model release version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="$INPUT_VERSION"
+            echo "using workflow_dispatch input version: $VERSION"
+          elif [ -f .model-version ]; then
+            CUR=$(cat .model-version | tr -d '[:space:]')
+            # Bump patch component: 1.0.0 -> 1.0.1
+            MAJOR=$(echo "$CUR" | cut -d. -f1)
+            MINOR=$(echo "$CUR" | cut -d. -f2)
+            PATCH=$(echo "$CUR" | cut -d. -f3)
+            NEXT_PATCH=$((PATCH + 1))
+            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+            echo "bumping .model-version $CUR -> $VERSION"
+          else
+            VERSION="1.0.0"
+            echo ".model-version missing; defaulting to $VERSION"
+          fi
+          # Refuse to overwrite an existing tag.
+          if gh release view "model-v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release model-v$VERSION already exists; pass a different version via workflow_dispatch input"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Compute SHA256s and write MANIFEST.txt
+        id: manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          STAGE=workspace/release
+          mkdir -p "$STAGE"
+
+          # Pull the artifacts together: int8 model from INT8_DIR,
+          # tokenizer files from FP32_DIR (optimum-cli writes them
+          # alongside the FP32 model.onnx).
+          cp workspace/models/bge-small-int8/model.onnx        "$STAGE/model.onnx"
+          cp workspace/models/bge-small-fp32/vocab.txt         "$STAGE/vocab.txt"
+          cp workspace/models/bge-small-fp32/tokenizer.json    "$STAGE/tokenizer.json"
+
+          OPTIMUM_VERSION=$(pip show optimum     | awk '/^Version:/ {print $2}')
+          ORT_VERSION=$(pip     show onnxruntime | awk '/^Version:/ {print $2}')
+          TRANSFORMERS_VERSION=$(pip show transformers | awk '/^Version:/ {print $2}')
+
+          # Best-effort BAAI source revision via huggingface_hub. Falls
+          # back to 'main' if the call fails (e.g. offline runner). The
+          # script is written to a tempfile to avoid yaml block-scalar
+          # indentation hazards from multi-line python -c strings.
+          BAAI_SCRIPT=$(mktemp)
+          printf '%s\n' \
+            'try:' \
+            '    from huggingface_hub import HfApi' \
+            '    print(HfApi().model_info("BAAI/bge-small-en-v1.5").sha or "main")' \
+            'except Exception:' \
+            '    print("main")' \
+            > "$BAAI_SCRIPT"
+          BAAI_REV=$(python "$BAAI_SCRIPT" 2>/dev/null || echo main)
+          rm -f "$BAAI_SCRIPT"
+
+          BUILD_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          {
+            echo "# guild model-v$VERSION provenance"
+            echo ""
+            echo "## Files (SHA256)"
+            for f in model.onnx vocab.txt tokenizer.json; do
+              sha=$(sha256sum "$STAGE/$f" | awk '{print $1}')
+              echo "$sha  $f"
+            done
+            echo ""
+            echo "## Tooling"
+            echo "optimum:      $OPTIMUM_VERSION"
+            echo "onnxruntime:  $ORT_VERSION"
+            echo "transformers: $TRANSFORMERS_VERSION"
+            echo ""
+            echo "## Source"
+            echo "model:    BAAI/bge-small-en-v1.5"
+            echo "revision: $BAAI_REV"
+            echo ""
+            echo "## Build"
+            echo "timestamp: $BUILD_TS"
+            echo "workflow:  $RUN_URL"
+          } > "$STAGE/MANIFEST.txt"
+
+          echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
+          echo "MANIFEST.txt:"
+          cat "$STAGE/MANIFEST.txt"
+
+      - name: Create model release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION:  ${{ steps.version.outputs.version }}
+          STAGE:    ${{ steps.manifest.outputs.stage }}
+        run: |
+          set -euo pipefail
+          gh release create "model-v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "guild model v$VERSION" \
+            --notes-file "$STAGE/MANIFEST.txt" \
+            --prerelease \
+            "$STAGE/model.onnx" \
+            "$STAGE/vocab.txt" \
+            "$STAGE/tokenizer.json" \
+            "$STAGE/MANIFEST.txt"
+          echo "created release model-v$VERSION"

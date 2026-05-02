@@ -74,7 +74,7 @@ func formatQuestListCLI(s command.CLISink, o ListOutput) string {
 
 func formatQuestListMCP(s command.MCPSink, o ListOutput) string {
 	if len(o.Quests) == 0 {
-		return "no quests"
+		return "✅ no quests"
 	}
 	var b strings.Builder
 	b.WriteString(s.Line("⚔️", "", fmt.Sprintf("%d quest(s):", len(o.Quests))))

@@ -34,7 +34,15 @@ var reforgeFaultForTest func() error
 // in SOME project; ProjectID scoping is NOT enforced on reforge). Cross-project
 // links are permitted by design; reforge uses the same supersedes relation so it
 // inherits that rule for consistency.
-func Reforge(ctx context.Context, db *sql.DB, oldID, newID int64, now time.Time) error {
+//
+// When embed is non-nil and Enabled, Reforge dispatches a Tx2 re-embed
+// for newID after the Tx1 commits so the successor's vector reflects
+// its canonical post-reforge summary. INSERT OR IGNORE on lore_vectors
+// means a re-embed of an already-embedded row collapses to a no-op
+// plus an epoch bump, which is the intended ADR-003 behavior
+// ("lore_reforge: always runs Tx2 re-embed after the row rewrite
+// commits"). When embed is nil or disabled, no vector work happens.
+func Reforge(ctx context.Context, db *sql.DB, oldID, newID int64, now time.Time, embedDeps *EmbedDeps) error {
 	if db == nil {
 		return fmt.Errorf("lore: reforge: nil db")
 	}
@@ -94,6 +102,23 @@ func Reforge(ctx context.Context, db *sql.DB, oldID, newID int64, now time.Time)
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("lore: reforge: commit: %w", err)
+	}
+
+	// Tx2 re-embed of the successor entry. Fire-and-forget when async
+	// (MCP surface), synchronous otherwise (CLI). A failure here is
+	// never surfaced as a Reforge error; the row rewrite is already
+	// committed.
+	if embedDeps.Enabled() {
+		var summary string
+		if err := db.QueryRowContext(ctx,
+			`SELECT summary FROM entries WHERE id = ?`, newID,
+		).Scan(&summary); err != nil {
+			// Could not load: skip silently. The caller has already
+			// committed the row-level reforge; a missed re-embed will
+			// be fixed up on the next init-backfill pass.
+			return nil
+		}
+		embedDeps.runTx2(ctx, db, newID, summary)
 	}
 	return nil
 }

@@ -18,8 +18,11 @@ Every `guild <verb>` subcommand generated from the live cobra tree.
 - [`guild lore archive`](#guild-lore-archive) — write snapshot.json for git-trackable project checkpoint (alias: export)
 - [`guild lore catalog`](#guild-lore-catalog) — bulk-import .md files as lore entries
 - [`guild lore commune`](#guild-lore-commune) — health report for oath bloat and duplicate lore
+- [`guild lore coverage-reconcile`](#guild-lore-coverage-reconcile) — reset vector_coverage_den to the live active-entry count
 - [`guild lore dossier`](#guild-lore-dossier) — emit ~2k-token project context bundle for subagents
 - [`guild lore echoes`](#guild-lore-echoes) — surface stale entries for review
+- [`guild lore embed-rebuild`](#guild-lore-embed-rebuild) — reset and rebuild the embedding vector index for the active project
+- [`guild lore health`](#guild-lore-health) — embedder health report (coverage, pending, stale, errors)
 - [`guild lore init`](#guild-lore-init) — register the current git repository as a guild project
 - [`guild lore inquest`](#guild-lore-inquest) — audit oath wall for >60-word principles
 - [`guild lore inscribe`](#guild-lore-inscribe) — inscribe a new knowledge entry into the lore
@@ -32,6 +35,7 @@ Every `guild <verb>` subcommand generated from the live cobra tree.
 - [`guild lore ripples`](#guild-lore-ripples) — walk provenance edges from a seed entry
 - [`guild lore seal`](#guild-lore-seal) — seal an entry, archiving it from active circulation
 - [`guild lore study`](#guild-lore-study) — full detail + linked entries graph
+- [`guild lore unlink`](#guild-lore-unlink) — remove a provenance link between entries
 - [`guild lore update`](#guild-lore-update) — edit fields or reclassify an entry
 - [`guild lore whispers`](#guild-lore-whispers) — show current idea pipeline (kind=idea, status=seed|exploring)
 - [`guild mcp`](#guild-mcp) — MCP server subcommands
@@ -56,6 +60,7 @@ Every `guild <verb>` subcommand generated from the live cobra tree.
 - [`guild quest pulse`](#guild-quest-pulse) — quest quality dashboard: rework, churn, hot files
 - [`guild quest restore`](#guild-quest-restore) — restore quest state from .guild/snapshot.json
 - [`guild quest scroll`](#guild-quest-scroll) — full history: status + journal + timeline
+- [`guild quest search`](#guild-quest-search) — search quests by keyword or semantic paraphrase
 - [`guild quest summon`](#guild-quest-summon) — delegate a quest to a teammate agent
 - [`guild quest update`](#guild-quest-update) — modify a quest's spec after post
 - [`guild status`](#guild-status) — dashboard: last briefing, oath, top bounty, parallelism (alias of quest bounties)
@@ -261,6 +266,27 @@ Health report for oath bloat and duplicate lore. fix=true auto-remediates severe
 | `--json` | bool | `false` | emit structured JSON result instead of formatted text |
 | `--project`, `-p` | string | `—` | project override |
 
+## `guild lore coverage-reconcile`
+
+reset vector_coverage_den to the live active-entry count
+
+**Usage**
+
+```
+guild lore coverage-reconcile [flags]
+```
+
+**Aliases:** fix-coverage
+
+Reset meta.vector_coverage_den to the live COUNT(*) WHERE status NOT IN ('archived','parked') and report before/after values. Corrects num > den drift that produces coverage > 100%. Backfill also runs this automatically, so this command is a manual escape hatch.
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+| `--project`, `-p` | string | `—` | project override |
+
 ## `guild lore dossier`
 
 emit ~2k-token project context bundle for subagents
@@ -299,6 +325,48 @@ List stale/decayed entries the next agent should review or reforge. Cross-checks
 | flag | type | default | description |
 | --- | --- | --- | --- |
 | `--git-aware` | bool | `false` | also flag entries whose file_path changed after creation |
+| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+| `--project`, `-p` | string | `—` | project override |
+
+## `guild lore embed-rebuild`
+
+reset and rebuild the embedding vector index for the active project
+
+**Usage**
+
+```
+guild lore embed-rebuild [flags]
+```
+
+**Aliases:** embed-reset
+
+Delete all lore_vectors rows for the active project, flip every active entry's vector_state to 'pending', then encode each entry and insert the resulting int8 vectors. Safe under concurrent MCP servers: uses BEGIN IMMEDIATE for the reset phase and INSERT OR IGNORE for each vector write (ADR-003 invariants).
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+| `--project`, `-p` | string | `—` | project override |
+
+## `guild lore health`
+
+embedder health report (coverage, pending, stale, errors)
+
+**Usage**
+
+```
+guild lore health [flags]
+```
+
+**Aliases:** embedder-health
+
+Print the embedder health section: model_id, tokenizer_hash, runtime_version, dim, coverage (num/den and percent), pending count, stale count, last encode error (if any), last successful encode timestamp, and rolling embed_error_count.
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
 | `--json` | bool | `false` | emit structured JSON result instead of formatted text |
 | `--project`, `-p` | string | `—` | project override |
 
@@ -551,6 +619,27 @@ guild lore study LORE-N [flags]
 | flag | type | default | description |
 | --- | --- | --- | --- |
 | `--project`, `-p` | string | `—` | project id (defaults to git toplevel) |
+
+## `guild lore unlink`
+
+remove a provenance link between entries
+
+**Usage**
+
+```
+guild lore unlink FROM_ID [flags]
+```
+
+Remove an informs (or supersedes/contradicts) edge from the provenance graph. Idempotent: removing a non-existent edge returns success with a 'no matching edge' note.
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--informs` | string | `—` | target entry id (LORE-N or bare N), the one that was being informed |
+| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+| `--project`, `-p` | string | `—` | project override |
+| `--relation` | string | `—` | link relation to remove: informs (default) \| supersedes \| contradicts |
 
 ## `guild lore update`
 
@@ -1025,6 +1114,25 @@ Full quest history: status, journal, timeline. Use to pick up a quest someone el
 | flag | type | default | description |
 | --- | --- | --- | --- |
 | `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+
+## `guild quest search`
+
+search quests by keyword or semantic paraphrase
+
+**Usage**
+
+```
+guild quest search QUERY... [flags]
+```
+
+BM25+stopwords full-text search over quest subjects and spec notes. When quest vector coverage >= 90%, adds a semantic arm and RRF-fuses (k=60, same gate and fusion as lore_appraise). Returns up to 10 results. Replaces quest list --all | grep.
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | emit structured JSON result instead of formatted text |
+| `--limit`, `-n` | int | `0` | max results (default 10) |
 
 ## `guild quest summon`
 

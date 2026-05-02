@@ -13,6 +13,8 @@ import (
 
 	"github.com/mathomhaus/guild/internal/command"
 	"github.com/mathomhaus/guild/internal/config"
+	"github.com/mathomhaus/guild/internal/lore"
+	"github.com/mathomhaus/guild/internal/lore/embed"
 	"github.com/mathomhaus/guild/internal/project"
 	"github.com/mathomhaus/guild/internal/quest"
 	"github.com/mathomhaus/guild/internal/storage"
@@ -164,6 +166,7 @@ func init() {
 	bindRegistryVerb(questCmd, quest.ListCommand, deps, "quest list")
 	bindRegistryVerb(questCmd, quest.GuildCommand, deps, "quest guild")
 	bindRegistryVerb(questCmd, quest.PulseCommand, deps, "quest pulse")
+	bindRegistryVerb(questCmd, quest.SearchCommand, deps, "quest search")
 }
 
 // bindRegistryVerb attaches a Command registry spec to parent and wraps
@@ -211,8 +214,13 @@ func wrapTelemetry(parent *cobra.Command, name, subcmd string) {
 // buildCLICommandDeps constructs the Deps bundle for CLI-side command
 // registry adapters. Consolidates DB open + project resolution behind
 // the surface-neutral Deps shape so Handlers stay ignorant of cobra.
+// Embed is wired via wireQuestEmbedDeps so `guild quest search` reaches
+// the RRF arm when quest corpus coverage is at or above 0.90 (QUEST-259).
+// The per-process Index build cost (~50-200 ms for a ~250-quest corpus)
+// is accepted for the CLI surface: the maintainer decided CLI parity
+// with MCP is worth the startup overhead.
 func buildCLICommandDeps() command.Deps {
-	return command.Deps{
+	d := command.Deps{
 		OpenDB: openQuestDB,
 		ResolveProj: func(ctx context.Context, argProject string) (string, error) {
 			db, err := openQuestDB(ctx)
@@ -228,6 +236,73 @@ func buildCLICommandDeps() command.Deps {
 		},
 		Now:        time.Now,
 		OpenLoreDB: openLoreDB,
+	}
+	// command.Deps.Embed is `any`; assigning a typed-nil pointer would
+	// produce a non-nil interface value and defeat questEmbedFromDeps's
+	// nil guard. Assign only when wiring yielded a real *QuestEmbedDeps.
+	if e := wireQuestEmbedDeps(); e != nil {
+		d.Embed = e
+	}
+	return d
+}
+
+// wireQuestEmbedDeps builds a *quest.QuestEmbedDeps for the CLI surface.
+// It mirrors wireCLIEmbedDeps (lore_read.go) but targets the quest corpus:
+//  1. Borrows the lore-side Embedder via lore.WireEmbedDeps (the same
+//     embedder that generated quest_vectors; no second extraction needed).
+//  2. Opens quest.db, verifies quest.embedder_state == "enabled".
+//  3. Builds a QuestCorpus Index and loads vectors from quest.db.
+//  4. Returns a *quest.QuestEmbedDeps or nil on any failure.
+//
+// Nil is the BM25-only fallback path; quest_search tolerates it.
+// Uses Async=false and LoadIndex=false for the lore side because this
+// call is purely for borrowing the Embedder: the quest-side Index is
+// built here against quest.db, not lore.db.
+func wireQuestEmbedDeps() *quest.QuestEmbedDeps {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Borrow the lore-side embedder. WireEmbedDeps returns nil when the
+	// embedder state is not "enabled" or assets are not bundled.
+	loreDB, err := openLoreDB(ctx)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = loreDB.Close() }()
+	loreDeps, _, _ := lore.WireEmbedDeps(ctx, loreDB, lore.EmbedWireOptions{
+		Async:     false,
+		LoadIndex: false,
+		Logger:    newCLILogger(),
+	})
+	if loreDeps == nil || !loreDeps.Enabled() {
+		return nil
+	}
+
+	// Verify quest corpus embedder_state is "enabled" before loading the index.
+	qdb, qerr := openQuestDB(ctx)
+	if qerr != nil {
+		return nil
+	}
+	defer func() { _ = qdb.Close() }()
+
+	stateKey := embed.QuestCorpus{}.MetaKey(embed.FieldEmbedderState)
+	var state string
+	if scanErr := qdb.QueryRowContext(ctx,
+		`SELECT COALESCE(value, '') FROM meta WHERE key = ?`, stateKey,
+	).Scan(&state); scanErr != nil || state != "enabled" {
+		return nil
+	}
+
+	modelID := loreDeps.ModelID
+	idx := embed.NewIndex(embed.QuestCorpus{}, modelID, embed.WithLogger(newCLILogger()))
+	if _, loadErr := idx.LoadFromDB(ctx, qdb); loadErr != nil {
+		return nil
+	}
+
+	return &quest.QuestEmbedDeps{
+		Embedder: loreDeps.Embedder,
+		Index:    idx,
+		ModelID:  modelID,
 	}
 }
 

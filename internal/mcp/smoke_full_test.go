@@ -43,6 +43,7 @@ var toolArgSpecs = map[string][]command.ArgSpec{
 	"lore_inquest":  lore.InquestCommand.Args,
 	"lore_inscribe": lore.InscribeCommand.Args,
 	"lore_link":     lore.LinkCommand.Args,
+	"lore_unlink":   lore.UnlinkCommand.Args,
 	"lore_list":     lore.ListCommand.Args,
 	"lore_meld":     lore.MeldCommand.Args,
 	"lore_oath":     lore.OathCommand.Args,
@@ -69,6 +70,7 @@ var toolArgSpecs = map[string][]command.ArgSpec{
 	"quest_pulse":    quest.PulseCommand.Args,
 	"quest_scroll":   quest.ScrollCommand.Args,
 	"quest_summon":   quest.SummonCommand.Args,
+	"quest_search":   quest.SearchCommand.Args,
 	"quest_update":   quest.UpdateCommand.Args,
 }
 
@@ -83,6 +85,7 @@ var flexIntOverrides = map[string]map[string]any{
 	"lore_seal":    {"entry_id": 999999},
 	"lore_update":  {"entry_id": 999999},
 	"lore_link":    {"from_id": 999998, "to_id": 999999},
+	"lore_unlink":  {"from_id": 999998, "to_id": 999999},
 	"lore_reforge": {"old_id": 999998, "new_id": 999999},
 }
 

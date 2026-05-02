@@ -174,7 +174,7 @@ func TestBootstrapRoundTrip_PersistsActiveProject(t *testing.T) {
 
 	// Body should carry the narration header.
 	body := textOf(result.Content)
-	if !strings.Contains(body, "active project set") {
+	if !strings.Contains(body, "active project:") {
 		t.Errorf("missing narration header; body=%q", body)
 	}
 	if !strings.Contains(body, want) {

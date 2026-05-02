@@ -45,7 +45,11 @@ var ReforgeCommand = &command.Command[ReforgeInput, ReforgeOutput]{
 		if _, err := d.ResolveProj(ctx, in.Project); err != nil {
 			return ReforgeOutput{}, err
 		}
-		if err := Reforge(ctx, db, oldID, newID, time.Time{}); err != nil {
+		// QUEST-213 wires d.Embed (carried as `any` in command.Deps to
+		// avoid the command↔lore import cycle). When the adapter layer
+		// did not construct an EmbedDeps, embedFromDeps returns nil and
+		// Reforge behaves exactly like the pre-Phase-1 path.
+		if err := Reforge(ctx, db, oldID, newID, time.Time{}, embedFromDeps(ctx, d)); err != nil {
 			return ReforgeOutput{}, err
 		}
 		return ReforgeOutput{OldID: oldID, NewID: newID}, nil

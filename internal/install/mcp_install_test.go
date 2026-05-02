@@ -405,7 +405,7 @@ func TestMCPInstall_SpacyBinPath_Display(t *testing.T) {
 	// Create the temp dir with a space-containing name and a real file so
 	// resolveAbsBinPath stat-check accepts it.
 	parent := t.TempDir()
-	spacyDir := parent + "/Users Kunal Smith/go/bin"
+	spacyDir := parent + "/Users Jane Doe/go/bin"
 	if err := os.MkdirAll(spacyDir, 0o700); err != nil {
 		t.Fatalf("mkdir spacy dir: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestMCPInstall_SpacyBinPath_Display(t *testing.T) {
 		t.Errorf("display command contains unquoted spacy path; got: %s", cmd)
 	}
 	// The path itself (sans quotes) must still appear in the output.
-	if !strings.Contains(buf.String(), "Users Kunal Smith") {
+	if !strings.Contains(buf.String(), "Users Jane Doe") {
 		t.Errorf("output missing spacy path; got:\n%s", buf.String())
 	}
 }
@@ -448,7 +448,7 @@ func TestMCPInstall_SpacyBinPath_Display(t *testing.T) {
 // binary path passes the path as a single argv token — not split by spaces.
 func TestMCPInstall_SpacyBinPath_Run(t *testing.T) {
 	parent := t.TempDir()
-	spacyDir := parent + "/Users Kunal Smith/go/bin"
+	spacyDir := parent + "/Users Jane Doe/go/bin"
 	if err := os.MkdirAll(spacyDir, 0o700); err != nil {
 		t.Fatalf("mkdir spacy dir: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestMCPInstall_SpacyBinPath_Run(t *testing.T) {
 			found = true
 		}
 		// No token should be just the first space-split fragment.
-		if tok == "/Users Kunal Smith/go/bin" || tok == parent+"/Users" {
+		if tok == "/Users Jane Doe/go/bin" || tok == parent+"/Users" {
 			t.Errorf("argv was split on space: token %q", tok)
 		}
 	}

@@ -263,7 +263,7 @@ func TestAutoBootstrap_ExplicitGuildSessionStartStillReturnsFullSnapshot(t *test
 
 	// The snapshot must carry all five structural markers.
 	for _, want := range []string{
-		"active project set",
+		"active project:",
 		"📋 last briefing",
 		"⚔️", // oath section (any oath marker)
 		"👻",  // fading echoes

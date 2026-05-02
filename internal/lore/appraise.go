@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/lore/embed"
 )
 
 // AppraiseParams bundles the inputs to Appraise. All fields are optional
@@ -49,6 +51,18 @@ type AppraiseParams struct {
 	// Now is the reference "now" for recency decay. Tests inject a
 	// fixed timestamp; production callers pass time.Now().UTC().
 	Now time.Time
+
+	// Embed is the optional embeddings pipeline. When nil or not
+	// Enabled, Appraise is identical to the Phase 0 BM25+stopwords
+	// path and never constructs a vector arm. Enabled + coverage >=
+	// CoverageThreshold triggers the RRF fusion branch per ADR-003
+	// "Partial coverage and deterministic fallback".
+	Embed *EmbedDeps
+
+	// ProjectIDs is reserved for future use. The cross-project RRF path
+	// now runs a single global BM25+vector query rather than a per-project
+	// fan-out, so this field is no longer read. Kept for API compatibility.
+	ProjectIDs []string
 }
 
 // AppraiseResult is one ranked row with the score exposed for
@@ -84,13 +98,34 @@ var ErrEmptyQuery = errors.New("lore: appraise: empty query")
 const defaultAppraiseLimit = 10
 const appraiseOverfetch = 3
 
+// CoverageThreshold is the floor below which Appraise refuses to
+// construct the vector arm and serves BM25+stopwords deterministically.
+// Named constant per the "no magic numbers" bar; the value 0.90 comes
+// from ADR-003 "Partial coverage and deterministic fallback" and was
+// chosen to tolerate ~10% of a freshly upgraded corpus missing vectors
+// during init-backfill without exposing the user to mixed-mode ranking.
+const CoverageThreshold = 0.90
+
+// RRFTopK is the size of the per-arm top-K slice both the BM25 ranker
+// and the vector arm produce before Reciprocal Rank Fusion. Mirrors
+// the k=60 fusion constant on the algorithm side; the ranker also
+// produces exactly 60 candidates so every item in both lists has a
+// finite rank contribution.
+const RRFTopK = embed.RRFK
+
 // ftsQuery converts a raw user query into a safe FTS5 expression.
-// Strips every non-word char (FTS5 reserves `-`, `"`, `*`, etc.), drops
-// tokens shorter than 2 characters, and returns an OR-of-prefixes.
+// Strips common English stopwords (see stopwords.go) before tokenizing,
+// then strips every non-word char (FTS5 reserves `-`, `"`, `*`, etc.),
+// drops tokens shorter than 2 characters, and returns an OR-of-prefixes.
+// Stopword stripping is applied before the length check so that a query
+// composed entirely of stopwords falls through to the original tokens
+// (via stripStopwords's no-op fallback), preserving exact-technical
+// query behavior.
 // Returns "" when no usable tokens survive, signalling the caller to
 // skip FTS entirely.
 func ftsQuery(userQuery string) string {
-	tokens := wordRE.FindAllString(strings.ToLower(userQuery), -1)
+	filtered := stripStopwords(userQuery)
+	tokens := wordRE.FindAllString(strings.ToLower(filtered), -1)
 	out := make([]string, 0, len(tokens))
 	for _, t := range tokens {
 		if len(t) < 2 {
@@ -163,6 +198,32 @@ func Appraise(ctx context.Context, db *sql.DB, params AppraiseParams) (*Appraise
 	now := params.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+
+	// ADR-003 gate: when the embedder is enabled AND coverage clears
+	// CoverageThreshold, appraise runs the hybrid RRF path. Otherwise
+	// it runs the Phase 0 BM25+stopwords path identical to the
+	// pre-Phase-1 code. The decision is local to this function: no
+	// global state, no caller coordination required. Cross-project
+	// appraise (AllProjects=true) delegates to appraiseCrossProject
+	// which fans out per-project and re-fuses the results.
+	if params.AllProjects && params.Embed.Enabled() {
+		out, handled, err := appraiseCrossProject(ctx, db, &params, now, scoring, limit)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			return out, nil
+		}
+	}
+	if !params.AllProjects && params.Embed.Enabled() {
+		out, handled, err := appraiseRRF(ctx, db, &params, now, scoring, limit)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			return out, nil
+		}
 	}
 
 	rows, bm25s, err := runFTSQuery(ctx, db, q, &params, now, overfetch)

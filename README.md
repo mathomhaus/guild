@@ -8,7 +8,7 @@
 
 ## What Is It
 
-`guild` is a single compiled Go binary containing a first-class MCP server backed by embedded SQLite. State lives strictly on local host; nothing leaves your machine.
+`guild` is a single compiled Go binary containing a first-class MCP server backed by embedded SQLite. State lives strictly on local host; nothing leaves your machine. Search blends keyword (BM25) with vector similarity, fused via reciprocal-rank fusion, so "how did we do X last time" surfaces both exact-term and semantic neighbors.
 
 Guild is designed to be operated autonomously by the agents, for the agents. Guildmasters (us humans) stay in the loop for important decisions and course corrections. Any MCP client — Claude Code, Codex, Cursor, etc. — can act as a Gate into the substrate. This lets parallel agents across different editors share context safely, using atomic locks to claim tasks without stepping on each other.
 
@@ -40,12 +40,43 @@ Requires macOS or Linux and an MCP-enabled editor (Claude Code, Codex, Cursor, e
 
 ### 1. Install
 
+**Recommended (pre-built binary with semantic retrieval):**
+
 ```bash
-$ curl -fsSL https://github.com/mathomhaus/guild/releases/latest/download/install.sh | sh
-$ guild --version
+curl -fsSL https://github.com/mathomhaus/guild/releases/latest/download/install.sh | sh
+guild --version
 ```
 
-Also available via `brew install mathomhaus/tap/guild` or `go install github.com/mathomhaus/guild/cmd/guild@latest`.
+Or via Homebrew:
+
+```bash
+brew install mathomhaus/tap/guild
+```
+
+Both paths install a binary built with `-tags=withembed`, so semantic
+retrieval works out of the box with no extra steps.
+
+**Clone and build (ship-ready, embed included):**
+
+```bash
+make install   # stages ONNX assets, then go install -tags=withembed
+```
+
+**Dev-only (faster compile, no semantic retrieval):**
+
+```bash
+make install-fast   # go install without -tags=withembed
+```
+
+**`go install` from module proxy (keyword-only retrieval):**
+
+```bash
+go install github.com/mathomhaus/guild/cmd/guild@latest
+```
+
+The Go toolchain cannot embed assets via `@latest`; this path gives
+you BM25 keyword search but not semantic (vector) retrieval. Use
+`install.sh` or `brew` for the full experience.
 
 ### 2. Initialize your project
 
@@ -101,8 +132,10 @@ guild lore inscribe "token refresh window" \
 guild quest journal QUEST-42 "switched to exponential backoff after mock-clock test"
 ```
 
-`lore appraise` is the discipline that keeps guild sharp — search
+`lore appraise` is the discipline that keeps guild sharp: search
 before you research, so knowledge accretes instead of duplicating.
+Appraise runs hybrid (BM25 + vector RRF) the moment your corpus is
+indexed.
 
 ### Act 3 — parting
 
@@ -154,7 +187,10 @@ Four primitives. Everything else in guild is a composition of these.
   (`observation`, `decision`, `research`, `principle`, `idea`). Each
   kind has its own default lifecycle: research auto-stales after 30
   days, decisions after 180 days, and ideas, observations, and
-  principles do not auto-stale by default.
+  principles do not auto-stale by default. Search runs both arms
+  (lexical BM25 + vector cosine) once the corpus is indexed. The
+  embedder backfills automatically; hybrid retrieval activates once
+  at least 90% of entries have vectors.
 - **Oath** — the subset of lore with `kind=principle`. Auto-loaded
   at the top of every session so every agent starts bound by the
   same principles.
@@ -169,6 +205,11 @@ State lives in SQLite under `~/.guild/`. Switching MCP clients requires no expor
 
 See [AGENTS.md](./AGENTS.md) for the agent-facing contributor contract
 and [CONTRIBUTING.md](./CONTRIBUTING.md) for the human-facing workflow.
+
+Maintainers shipping releases that embed the int8 ONNX retrieval
+model: see [docs/MODEL.md](./docs/MODEL.md) for the two-workflow build
+pattern (model production vs binary release), the `.model-version`
+pin, and the rebuild cadence.
 
 ---
 

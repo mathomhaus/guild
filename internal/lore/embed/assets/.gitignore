@@ -1,0 +1,7 @@
+# Ignore every staged binary asset. These are downloaded/copied by
+# `make assets` before a release build; the repo itself does not track
+# them. See README.md for details.
+*/libonnxruntime.dylib
+*/libonnxruntime.so
+*/model.onnx
+*/vocab.txt
