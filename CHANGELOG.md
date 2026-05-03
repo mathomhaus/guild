@@ -7,6 +7,10 @@ it reaches 1.0.
 
 ## [Unreleased]
 
+### Documentation
+
+- Document the `Stacked on: #N` PR body convention for non-main-based PRs (CONTRIBUTING.md, PR template).
+
 ## [0.3.1] - 2026-04-24
 
 ### Changed
