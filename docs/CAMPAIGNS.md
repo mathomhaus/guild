@@ -57,8 +57,8 @@ Create a new campaign when:
   single new campaign would meaningfully clarify reporting.
 
 If you would have to explain the campaign in two sentences, it's probably
-two campaigns. If you're not sure, reuse — `quest epic` (the rename verb)
-exists and is cheap to apply later.
+two campaigns. If you're not sure, reuse — `quest campaign` (the rename
+verb) exists and is cheap to apply later.
 
 ## Setting and changing the campaign on a quest
 
@@ -66,12 +66,14 @@ Set the campaign at quest creation time, or apply it to a batch of existing
 quests with the rename verb:
 
 ```bash
-guild quest epic <campaign-name> QUEST-1 QUEST-2 ...
+guild quest campaign <campaign-name> QUEST-1 QUEST-2 ...
+# `quest epic` works as an alias for the same operation.
 ```
 
-`quest epic` is an alias for the same operation; the underlying field is
-`campaign`. Use whichever spelling reads more naturally to you. The MCP
-tool is `quest_epic` with `--campaign` and `--epic` both accepted as input.
+`quest campaign` is the canonical CLI verb; `quest epic` is registered as
+an alias. The underlying field is `campaign` and the MCP tool name stays
+`quest_epic` for backward compatibility, with `--campaign` and `--epic`
+both accepted as input.
 
 ## Out of scope
 
@@ -81,4 +83,5 @@ file a quest for the merge work itself rather than treating it as a docs
 update.
 
 There is also no `guild campaign` verb to manage the campaign list
-programmatically. Filings happen via `quest epic` on the affected quests.
+programmatically. Filings happen via `quest campaign` on the affected
+quests.
