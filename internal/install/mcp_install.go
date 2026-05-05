@@ -464,7 +464,7 @@ func goBinCandidates() []string {
 // extracted. A nil listArgv, an exec error, or an unreadable stdout all
 // fall through to (false, "") so the caller proceeds with the normal
 // install attempt — the probe is best-effort, not authoritative.
-func isGuildRegistered(execCmdFn func(string, ...string) *exec.Cmd, listArgv []string) (bool, string) {
+func isGuildRegistered(execCmdFn func(string, ...string) *exec.Cmd, listArgv []string) (registered bool, cmdPath string) {
 	if len(listArgv) == 0 || execCmdFn == nil {
 		return false, ""
 	}
@@ -489,7 +489,7 @@ func isGuildRegistered(execCmdFn func(string, ...string) *exec.Cmd, listArgv []s
 // The returned path is the first whitespace-separated token after the
 // "guild:" prefix, or "" when the line carries no command (bare token,
 // or list-marker shape without a colon).
-func scanForGuildEntry(out []byte) (bool, string) {
+func scanForGuildEntry(out []byte) (registered bool, cmdPath string) {
 	for _, raw := range strings.Split(string(out), "\n") {
 		line := strings.TrimSpace(raw)
 		line = strings.TrimPrefix(line, "- ")
