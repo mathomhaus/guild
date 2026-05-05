@@ -36,7 +36,7 @@ func Whispers(ctx context.Context, db *sql.DB, project, topic string) ([]*Entry,
 	sqlText := `SELECT ` + entryColumns + `
 		FROM entries e
 		WHERE ` + strings.Join(clauses, " AND ") + `
-		ORDER BY e.created_at DESC`
+		ORDER BY e.created_at DESC, e.id DESC`
 	rows, err := db.QueryContext(ctx, sqlText, args...) //sqlcheck:ignore // sqlText is a constant template; clauses are hard-coded fragments
 	if err != nil {
 		return nil, fmt.Errorf("lore: whispers: query: %w", err)
