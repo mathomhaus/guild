@@ -669,22 +669,28 @@ func TestMCPInstall_Run_RegistersWhenAbsent(t *testing.T) {
 // incidental mentions of "guild" inside command-value strings.
 func TestScanForGuildEntry(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want bool
+		name     string
+		in       string
+		want     bool
+		wantPath string
 	}{
-		{"claude human", "guild: /usr/local/bin/guild mcp serve\n", true},
-		{"list marker", "- guild\n- other\n", true},
-		{"bare token", "guild\n", true},
-		{"mixed list", "  * other\n  * guild: /bin/guild\n", true},
-		{"empty", "", false},
-		{"only other", "other: /bin/other mcp serve\n", false},
-		{"mention inside value only", "other: /path/to/guild-wrapper mcp serve\n", false},
+		{"claude human", "guild: /usr/local/bin/guild mcp serve\n", true, "/usr/local/bin/guild"},
+		{"list marker", "- guild\n- other\n", true, ""},
+		{"bare token", "guild\n", true, ""},
+		{"mixed list", "  * other\n  * guild: /bin/guild\n", true, "/bin/guild"},
+		{"empty", "", false, ""},
+		{"only other", "other: /bin/other mcp serve\n", false, ""},
+		{"mention inside value only", "other: /path/to/guild-wrapper mcp serve\n", false, ""},
+		{"colon no path", "guild:\n", true, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, _ := scanForGuildEntry([]byte(tc.in)); got != tc.want {
-				t.Errorf("scanForGuildEntry(%q) = %v, want %v", tc.in, got, tc.want)
+			got, path := scanForGuildEntry([]byte(tc.in))
+			if got != tc.want {
+				t.Errorf("scanForGuildEntry(%q) found = %v, want %v", tc.in, got, tc.want)
+			}
+			if path != tc.wantPath {
+				t.Errorf("scanForGuildEntry(%q) path = %q, want %q", tc.in, path, tc.wantPath)
 			}
 		})
 	}
@@ -785,5 +791,234 @@ func TestMCPInstall_Run_FailingProbe_FallsThrough(t *testing.T) {
 	}
 	if len(result.AlreadyRegistered) != 0 {
 		t.Errorf("AlreadyRegistered = %v, want empty", result.AlreadyRegistered)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// --run: path-divergence detection (#61)
+// ---------------------------------------------------------------------------
+
+// TestMCPInstall_Run_PathIdentical verifies that when an existing guild
+// entry's configured command path matches the running binary, the
+// client is recorded in AlreadyRegistered and the install command is
+// not re-invoked. This is the same-path case from issue #61.
+func TestMCPInstall_Run_PathIdentical(t *testing.T) {
+	var installCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				return exec.Command("printf", "guild: "+fakeBin+" mcp serve\n")
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+	if installCalls != 0 {
+		t.Errorf("install ran %d times, want 0 (paths identical)", installCalls)
+	}
+	if got := len(result.AlreadyRegistered); got != 1 {
+		t.Errorf("AlreadyRegistered len = %d, want 1", got)
+	}
+	if got := len(result.PathDivergent); got != 0 {
+		t.Errorf("PathDivergent len = %d, want 0", got)
+	}
+}
+
+// TestMCPInstall_Run_PathDivergent_NoUpdate verifies that when the
+// configured path differs from the running binary and neither --update
+// nor --force is set, the entry is reported in PathDivergent, the
+// install is NOT re-invoked, and the user-facing message names both
+// paths. This is the "stale entry, no flag" case from issue #61.
+func TestMCPInstall_Run_PathDivergent_NoUpdate(t *testing.T) {
+	var installCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+	stalePath := "/opt/old/bin/guild"
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				return exec.Command("printf", "guild: "+stalePath+" mcp serve\n")
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+	if installCalls != 0 {
+		t.Errorf("install ran %d times, want 0 (no --update flag)", installCalls)
+	}
+	if got := len(result.PathDivergent); got != 1 {
+		t.Errorf("PathDivergent len = %d, want 1", got)
+	}
+	if got := len(result.AlreadyRegistered); got != 0 {
+		t.Errorf("AlreadyRegistered len = %d, want 0", got)
+	}
+	out := buf.String()
+	if !strings.Contains(out, stalePath) {
+		t.Errorf("output missing stale path %q; got:\n%s", stalePath, out)
+	}
+	if !strings.Contains(out, "--update") {
+		t.Errorf("output should hint at --update; got:\n%s", out)
+	}
+}
+
+// TestMCPInstall_Run_PathDivergent_WithUpdate verifies that when the
+// configured path differs and --update is set, the install command IS
+// re-invoked to refresh the entry, and the client is recorded in
+// PathDivergent so callers can surface that the entry was rewritten.
+func TestMCPInstall_Run_PathDivergent_WithUpdate(t *testing.T) {
+	var installCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+	stalePath := "/opt/old/bin/guild"
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Update:       true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				return exec.Command("printf", "guild: "+stalePath+" mcp serve\n")
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes --update: %v", err)
+	}
+	if installCalls != 1 {
+		t.Errorf("install ran %d times, want 1 (--update should refresh)", installCalls)
+	}
+	if got := len(result.PathDivergent); got != 1 {
+		t.Errorf("PathDivergent len = %d, want 1", got)
+	}
+	if got := len(result.Ran); got != 1 {
+		t.Errorf("Ran len = %d, want 1", got)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "refreshing") {
+		t.Errorf("output should announce refresh; got:\n%s", out)
+	}
+}
+
+// TestMCPInstall_Run_Force_BypassesProbe verifies that --force skips the
+// list probe entirely and always re-invokes install — useful when the
+// configured command is unparseable or the user wants to overwrite
+// regardless of inspection. Issue #61.
+func TestMCPInstall_Run_Force_BypassesProbe(t *testing.T) {
+	var installCalls, listCalls int
+
+	c := alwaysDetected("Claude Code", claudeArgv)
+	c.ListArgv = func() []string { return []string{"claude-mcp-list"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Force:        true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "claude-mcp-list":
+				listCalls++
+				return exec.Command("printf", "guild: "+fakeBin+" mcp serve\n")
+			case "claude":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes --force: %v", err)
+	}
+	if listCalls != 0 {
+		t.Errorf("list probe ran %d times, want 0 (--force skips probe)", listCalls)
+	}
+	if installCalls != 1 {
+		t.Errorf("install ran %d times, want 1 (--force always installs)", installCalls)
+	}
+	if len(result.Ran) != 1 {
+		t.Errorf("Ran = %v, want one entry", result.Ran)
 	}
 }

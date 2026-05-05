@@ -34,6 +34,10 @@ client's official CLI so you keep full control.
 Flags:
   --run           shell out to each detected client's CLI (prompts per command)
   --run --yes     shell out without prompting
+  --update        re-register clients whose configured path differs from the
+                  running binary (#61)
+  --force         re-register every detected client unconditionally; implies
+                  --update
   --print-config  print only the JSON snippet for manual paste (no detection)
   --skill         (not yet implemented) install Claude Code skill`,
 
@@ -43,12 +47,16 @@ Flags:
 		printCfg, _ := cmd.Flags().GetBool("print-config")
 		run, _ := cmd.Flags().GetBool("run")
 		yes, _ := cmd.Flags().GetBool("yes")
+		update, _ := cmd.Flags().GetBool("update")
+		force, _ := cmd.Flags().GetBool("force")
 		skill, _ := cmd.Flags().GetBool("skill")
 
 		opts := install.MCPInstallOptions{
 			PrintConfig: printCfg,
 			Run:         run,
 			Yes:         yes,
+			Update:      update,
+			Force:       force,
 			Skill:       skill,
 			Out:         os.Stdout,
 			In:          os.Stdin,
@@ -65,6 +73,8 @@ func init() {
 	mcpInstallCmd.Flags().Bool("print-config", false, "print JSON snippet for manual paste (no detection output)")
 	mcpInstallCmd.Flags().Bool("run", false, "shell out to each detected client's CLI (prompts per command)")
 	mcpInstallCmd.Flags().Bool("yes", false, "skip per-command confirmation prompts (combine with --run)")
+	mcpInstallCmd.Flags().Bool("update", false, "re-register clients whose configured path differs from the running binary")
+	mcpInstallCmd.Flags().Bool("force", false, "re-register every detected client unconditionally (implies --update)")
 	mcpInstallCmd.Flags().Bool("skill", false, "install Claude Code skill (not yet implemented)")
 
 	mcpCmd.AddCommand(mcpInstallCmd)
