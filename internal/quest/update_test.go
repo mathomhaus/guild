@@ -328,8 +328,13 @@ func TestUpdate_EmptyDependsOn_RedirectsToClear(t *testing.T) {
 			if !errors.Is(err, ErrEmptyDependsOn) {
 				t.Fatalf("Update with deps=%v: err = %v, want ErrEmptyDependsOn", tc.deps, err)
 			}
-			// State must be untouched on error.
-			reloaded := mustLoad(t, db, pid, b.ID)
+			// State must be untouched on error. Use Load(ctx, ...) directly so
+			// contextcheck sees the parent ctx flow into the subtest closure
+			// (the mustLoad helper synthesizes a fresh context.Background()).
+			reloaded, err := Load(ctx, db, pid, b.ID)
+			if err != nil {
+				t.Fatalf("Load %s: %v", b.ID, err)
+			}
 			if len(reloaded.DependsOn) != 1 || reloaded.DependsOn[0] != a.ID {
 				t.Errorf("B deps after refused empty update = %v, want [%s]", reloaded.DependsOn, a.ID)
 			}
