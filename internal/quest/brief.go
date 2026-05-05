@@ -68,7 +68,7 @@ func LastBriefAt(ctx context.Context, db *sql.DB, projectID string) (time.Time, 
 	qerr := db.QueryRowContext(ctx,
 		`SELECT created_at FROM task_notes
 		 WHERE project_id = ? AND task_id = ? AND note LIKE '[brief]%'
-		 ORDER BY created_at DESC LIMIT 1`,
+		 ORDER BY created_at DESC, id DESC LIMIT 1`,
 		projectID, briefTaskID,
 	).Scan(&createdAt)
 	if qerr != nil {
@@ -95,7 +95,7 @@ func LastBrief(ctx context.Context, db *sql.DB, projectID string) (agentID, text
 	qerr := db.QueryRowContext(ctx,
 		`SELECT agent_id, note, created_at FROM task_notes
 		 WHERE project_id = ? AND task_id = ? AND note LIKE '[brief]%'
-		 ORDER BY created_at DESC LIMIT 1`,
+		 ORDER BY created_at DESC, id DESC LIMIT 1`,
 		projectID, briefTaskID,
 	).Scan(&agent, &note, &createdAt)
 	if qerr != nil {
