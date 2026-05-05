@@ -80,6 +80,13 @@ var (
 	// ReplaceFiles).
 	ErrConflictingUpdate = errors.New("conflicting update: cannot set both append and replace for the same field")
 
+	// ErrEmptyDependsOn is returned when an Update call passes only
+	// empty/whitespace strings as DependsOn entries without also setting
+	// ClearDependsOn or ReplaceDependsOn. The historical behavior was a
+	// silent no-op, which made `--depends-on ""` indistinguishable from
+	// "no change" for callers (especially agents). Issue #47.
+	ErrEmptyDependsOn = errors.New("depends_on contains only empty values: use --clear-depends-on to remove all dependencies")
+
 	// ErrAlreadyDone is returned by Forfeit when the target quest is
 	// status='done'. Forfeit refuses to silently reopen a completed
 	// quest — the caller should explicitly rework or reopen.
