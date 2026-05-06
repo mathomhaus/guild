@@ -720,6 +720,7 @@ func TestMCPInstall_Run_NilListArgv_FallsThrough(t *testing.T) {
 		In:           &bytes.Buffer{},
 		clients:      []Client{c},
 		executableFn: func() (string, error) { return fakeBin, nil },
+		lookPathFn:   func(name string) (string, error) { return name, nil },
 		execCmdFn: func(name string, arg ...string) *exec.Cmd {
 			if name == "claude" {
 				installCalls++
@@ -766,6 +767,7 @@ func TestMCPInstall_Run_FailingProbe_FallsThrough(t *testing.T) {
 		In:           &bytes.Buffer{},
 		clients:      []Client{c},
 		executableFn: func() (string, error) { return fakeBin, nil },
+		lookPathFn:   func(name string) (string, error) { return name, nil },
 		execCmdFn: func(name string, arg ...string) *exec.Cmd {
 			switch name {
 			case "claude-mcp-list":
