@@ -29,7 +29,7 @@ func SetVersion(version, commit, date string) {
 
 var rootCmd = &cobra.Command{
 	Use:   "guild",
-	Short: "persistent cognition for AI agents — task + knowledge lifecycle",
+	Short: "shared context, memory, and task coordination for AI coding agents",
 	Long: `guild bundles three modes in one static binary:
 
   guild lore <verb>    knowledge lifecycle (inscribe, appraise, study, ...)
