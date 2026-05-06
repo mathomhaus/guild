@@ -1,6 +1,6 @@
 # The Agent Guild
 
-**A local-first, persistent cognition substrate for AI agents.**
+**Shared context, memory, and task coordination across AI coding agents.**
 
 [![CI](https://github.com/mathomhaus/guild/actions/workflows/ci.yml/badge.svg)](https://github.com/mathomhaus/guild/actions/workflows/ci.yml)
 [![Go 1.25](https://img.shields.io/badge/go-1.25-blue)](https://go.dev)
