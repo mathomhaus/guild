@@ -398,6 +398,25 @@ func TestTemplate_ContainsSectionMarker(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ~/.guild/ directory created with 0o700 (regression for #79)
+// ---------------------------------------------------------------------------
+
+func TestResolveDBPaths_GuildDirPerm0700(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, _, err := resolveDBPaths(InitOptions{}); err != nil {
+		t.Fatalf("resolveDBPaths: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(home, ".guild"))
+	if err != nil {
+		t.Fatalf("stat ~/.guild: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("~/.guild perm = %o; want 0o700", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // No duplicate sections on multiple runs
 // ---------------------------------------------------------------------------
 

@@ -422,7 +422,7 @@ func resolveDBPaths(opts InitOptions) (loreDB, questDB string, err error) {
 		return "", "", fmt.Errorf("install: resolve home dir: %w", err)
 	}
 	guildDir := filepath.Join(home, ".guild")
-	if err := os.MkdirAll(guildDir, 0o755); err != nil {
+	if err := os.MkdirAll(guildDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("install: create ~/.guild: %w", err)
 	}
 	if loreDB == "" {
