@@ -12,6 +12,7 @@ import (
 
 type AppraiseInput struct {
 	Query       string `json:"query" jsonschema:"search query; BM25+recency+title-boost ranked"`
+	QueryFlag   string `json:"query_flag,omitempty" jsonschema:"-"`
 	AllProjects bool   `json:"all_projects,omitempty" jsonschema:"search every project (recommended for research)"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"max results (default 10)"`
 	Since       string `json:"since,omitempty" jsonschema:"entries within window: 7d|2w|1m"`
@@ -31,7 +32,8 @@ var AppraiseCommand = &command.Command[AppraiseInput, AppraiseCmdOutput]{
 	Short:      "search lore before researching or inscribing",
 	Long:       "Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary — if current results exist, use them instead of re-deriving.",
 	Args: []command.ArgSpec{
-		{Name: "query", Kind: command.ArgPositional, Type: command.ArgString, Required: true, Variadic: true, Help: "search query (remaining positional args joined on CLI)"},
+		{Name: "query", Kind: command.ArgPositional, Type: command.ArgString, Variadic: true, Help: "search query (remaining positional args joined on CLI)"},
+		{Name: "query_flag", CLIFlagName: "query", Short: "q", Kind: command.ArgFlag, Type: command.ArgString, CLIOnly: true, Help: "search query (alternative to positional form)"},
 		{Name: "all_projects", Kind: command.ArgFlag, Type: command.ArgBool, Help: "search every project"},
 		{Name: "limit", Kind: command.ArgFlag, Type: command.ArgInt, Help: "max results (default 10)"},
 		{Name: "since", Kind: command.ArgFlag, Type: command.ArgString, Help: "entries within window (7d|2w|1m)"},
@@ -40,7 +42,10 @@ var AppraiseCommand = &command.Command[AppraiseInput, AppraiseCmdOutput]{
 	Handler: func(ctx context.Context, d command.Deps, in AppraiseInput) (AppraiseCmdOutput, error) {
 		query := strings.TrimSpace(in.Query)
 		if query == "" {
-			return AppraiseCmdOutput{}, errors.New("query required")
+			query = strings.TrimSpace(in.QueryFlag)
+		}
+		if query == "" {
+			return AppraiseCmdOutput{}, errors.New("query required: pass as positional arg or via -q/--query")
 		}
 		db, err := d.OpenDB(ctx)
 		if err != nil {

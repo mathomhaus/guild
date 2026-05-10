@@ -146,11 +146,16 @@ func countPositional(args []ArgSpec) int {
 
 // cobraPositionalValidator returns the cobra args validator for the
 // spec's positional args. If any positional is Variadic, the count is
-// a minimum (cobra.MinimumNArgs). Otherwise exactly-N applies.
+// a minimum (cobra.MinimumNArgs); a Variadic positional with
+// Required=false drops the floor to 0 so a sibling flag may supply
+// the value instead. Otherwise exactly-N applies.
 func cobraPositionalValidator(args []ArgSpec) cobra.PositionalArgs {
 	n := countPositional(args)
 	for _, a := range args {
 		if a.Kind == ArgPositional && a.Variadic && !a.MCPOnly {
+			if !a.Required {
+				return cobra.MinimumNArgs(0)
+			}
 			return cobra.MinimumNArgs(n)
 		}
 	}
