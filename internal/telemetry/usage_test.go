@@ -208,8 +208,9 @@ func TestRecord_OptOut_ConfigField(t *testing.T) {
 
 // ---- directory auto-create --------------------------------------------------
 
-// TestRecord_DirAutoCreate verifies that ~/.guild/ is created (0755) if it
-// does not exist before the first Record call.
+// TestRecord_DirAutoCreate verifies that ~/.guild/ is created (0o700) if it
+// does not exist before the first Record call. Tightened from 0o755 to
+// 0o700 in #79 so the corpus is never world-readable on shared hosts.
 func TestRecord_DirAutoCreate(t *testing.T) {
 	home := tempHome(t)
 	// ~/.guild does NOT exist yet (fresh temp dir).
@@ -230,8 +231,8 @@ func TestRecord_DirAutoCreate(t *testing.T) {
 		t.Errorf("~/.guild is not a directory")
 	}
 	// Verify permissions (mode bits excluding sticky/setuid).
-	if got := info.Mode().Perm(); got != 0o755 {
-		t.Errorf("~/.guild mode: got %04o, want 0755", got)
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("~/.guild mode: got %04o, want 0700", got)
 	}
 }
 
