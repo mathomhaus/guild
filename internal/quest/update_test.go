@@ -293,6 +293,33 @@ func TestUpdate_AutoUnblock_ReplaceDependsOnPath(t *testing.T) {
 	}
 }
 
+func TestUpdate_ReplaceDependsOnEmptyValueClearsDeps(t *testing.T) {
+	db, pid := newTestDB(t)
+	ctx := context.Background()
+	a := mustPost(t, db, pid, PostParams{Subject: "A"})
+	b := mustPost(t, db, pid, PostParams{
+		Subject:   "B",
+		DependsOn: []string{a.ID},
+	})
+	if b.Status != StatusBlocked {
+		t.Fatalf("B status = %s, want blocked before replace", b.Status)
+	}
+
+	if _, err := Update(ctx, db, pid, b.ID, UpdateParams{
+		ReplaceDependsOn: []string{""},
+	}); err != nil {
+		t.Fatalf("Update replace empty dep: %v", err)
+	}
+
+	got := mustLoad(t, db, pid, b.ID)
+	if got.Status != StatusNext {
+		t.Errorf("B status = %s, want next after empty replace clears deps", got.Status)
+	}
+	if len(got.DependsOn) != 0 {
+		t.Errorf("B deps = %v, want empty after empty replace", got.DependsOn)
+	}
+}
+
 func TestUpdate_ClearAcceptance(t *testing.T) {
 	db, pid := newTestDB(t)
 	q := mustPost(t, db, pid, PostParams{

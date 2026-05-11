@@ -65,6 +65,31 @@ func TestInscribeCommand_ExposesStrictProjectOnCLIAndMCP(t *testing.T) {
 	}
 }
 
+func TestInscribeCommand_CLIHelpLeadsWithExampleAndShortFlags(t *testing.T) {
+	parent := &cobra.Command{Use: "lore"}
+	lore.InscribeCommand.BindCobra(parent, command.Deps{})
+	sub := findSubcommand(parent, "inscribe")
+	if sub == nil {
+		t.Fatal("inscribe subcommand not registered")
+	}
+	if !strings.HasPrefix(sub.Example, "guild lore inscribe") {
+		t.Fatalf("inscribe help should expose a working example, got:\n%s", sub.Example)
+	}
+	for flag, shorthand := range map[string]string{
+		"kind":    "k",
+		"topic":   "t",
+		"summary": "s",
+	} {
+		f := sub.Flags().Lookup(flag)
+		if f == nil {
+			t.Fatalf("missing --%s flag", flag)
+		}
+		if f.Shorthand != shorthand {
+			t.Fatalf("--%s shorthand = %q, want %q", flag, f.Shorthand, shorthand)
+		}
+	}
+}
+
 func findSubcommand(parent *cobra.Command, name string) *cobra.Command {
 	for _, cmd := range parent.Commands() {
 		if cmd.Name() == name {

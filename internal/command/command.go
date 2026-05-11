@@ -30,6 +30,9 @@ type Command[I, O any] struct {
 	// Long is the extended help for cobra's Long field and the MCP
 	// tool's Description. If empty, Short is used for both.
 	Long string
+	// CLIExample is an optional Cobra-only examples block. It is kept
+	// out of MCP descriptions so tool schemas stay inside token budgets.
+	CLIExample string
 	// MCPOnly suppresses CLI registration (e.g. guild_session_start).
 	MCPOnly bool
 	// CLIOnly suppresses MCP registration (e.g. guild mcp-install).

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/command"
 )
 
 func TestScroll_FullHistory(t *testing.T) {
@@ -90,6 +92,75 @@ func TestScroll_NotFound(t *testing.T) {
 	_, err := Scroll(ctx, db, pid, "QUEST-404")
 	if err == nil {
 		t.Fatal("expected error for missing quest")
+	}
+}
+
+func TestScroll_DependencyStateExplainsBlockedQuest(t *testing.T) {
+	db, pid := newTestDB(t)
+	ctx := context.Background()
+
+	done := mustPost(t, db, pid, PostParams{Subject: "finished setup"})
+	open := mustPost(t, db, pid, PostParams{Subject: "remaining API work"})
+	if _, err := Fulfill(ctx, db, pid, done.ID, "done"); err != nil {
+		t.Fatalf("Fulfill done dep: %v", err)
+	}
+	blocked := mustPost(t, db, pid, PostParams{
+		Subject:   "blocked integration",
+		DependsOn: []string{done.ID, open.ID, "QUEST-404"},
+	})
+	if blocked.Status != StatusBlocked {
+		t.Fatalf("blocked status = %s, want blocked", blocked.Status)
+	}
+
+	res, err := Scroll(ctx, db, pid, blocked.ID)
+	if err != nil {
+		t.Fatalf("Scroll: %v", err)
+	}
+	if len(res.Dependencies) != 3 {
+		t.Fatalf("dependencies = %v, want 3", res.Dependencies)
+	}
+	checks := []struct {
+		index   int
+		id      string
+		status  Status
+		done    bool
+		missing bool
+		subject string
+	}{
+		{0, done.ID, StatusDone, true, false, "finished setup"},
+		{1, open.ID, StatusNext, false, false, "remaining API work"},
+		{2, "QUEST-404", "", false, true, ""},
+	}
+	for _, chk := range checks {
+		got := res.Dependencies[chk.index]
+		if got.ID != chk.id || got.Status != chk.status || got.Done != chk.done ||
+			got.Missing != chk.missing || got.Subject != chk.subject {
+			t.Fatalf("dependency[%d] = %+v, want id=%s status=%s done=%v missing=%v subject=%q",
+				chk.index, got, chk.id, chk.status, chk.done, chk.missing, chk.subject)
+		}
+	}
+}
+
+func TestFormatScrollIncludesDependencyState(t *testing.T) {
+	out := formatScrollMCP(command.MCPSink{}, ScrollOutput{Result: &ScrollResult{
+		Quest: &Quest{
+			ID:        "QUEST-3",
+			Subject:   "blocked integration",
+			Status:    StatusBlocked,
+			Priority:  "P1",
+			DependsOn: []string{"QUEST-1", "QUEST-2"},
+		},
+		Dependencies: []DependencyState{
+			{ID: "QUEST-1", Status: StatusDone, Done: true, Subject: "finished setup"},
+			{ID: "QUEST-2", Status: StatusNext, Subject: "remaining API work"},
+		},
+	}})
+	if !strings.Contains(out, "dependencies:") {
+		t.Fatalf("MCP scroll missing dependency section:\n%s", out)
+	}
+	if !strings.Contains(out, "QUEST-1 [done] finished setup") ||
+		!strings.Contains(out, "QUEST-2 [next] remaining API work") {
+		t.Fatalf("MCP scroll missing dependency detail:\n%s", out)
 	}
 }
 

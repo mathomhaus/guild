@@ -93,6 +93,13 @@ func formatScrollCLI(s command.CLISink, o ScrollOutput) string {
 			q.Owner, q.ClaimedAt.UTC().Format("2006-01-02T15:04")))
 	}
 	b.WriteString("\n")
+	if len(r.Dependencies) > 0 {
+		b.WriteString(s.Section("🔎", "[deps]", "dependency state"))
+		for _, dep := range r.Dependencies {
+			b.WriteString(s.Row("%s %s", dependencyStateMarker(dep), dependencyStateLine(dep)))
+		}
+		b.WriteString("\n")
+	}
 	if len(r.Notes) > 0 {
 		b.WriteString(s.Section("📝", "[notes]", "notes"))
 		for _, n := range r.Notes {
@@ -127,6 +134,12 @@ func formatScrollMCP(s command.MCPSink, o ScrollOutput) string {
 	if q.Owner != "" {
 		b.WriteString(s.Indented("owner", q.Owner))
 	}
+	if len(r.Dependencies) > 0 {
+		b.WriteString("  dependencies:\n")
+		for _, dep := range r.Dependencies {
+			fmt.Fprintf(&b, "    - %s %s\n", dependencyStateMarker(dep), dependencyStateLine(dep))
+		}
+	}
 	if len(q.Files) > 0 {
 		b.WriteString(s.Indented("files", strings.Join(q.Files, ", ")))
 	}
@@ -142,6 +155,24 @@ func formatScrollMCP(s command.MCPSink, o ScrollOutput) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func dependencyStateMarker(dep DependencyState) string {
+	if dep.Done {
+		return "✓"
+	}
+	return "×"
+}
+
+func dependencyStateLine(dep DependencyState) string {
+	if dep.Missing {
+		return fmt.Sprintf("%s [missing]", dep.ID)
+	}
+	subject := strings.TrimSpace(dep.Subject)
+	if subject == "" {
+		return fmt.Sprintf("%s [%s]", dep.ID, dep.Status)
+	}
+	return fmt.Sprintf("%s [%s] %s", dep.ID, dep.Status, subject)
 }
 
 func scrollStatusIcon(status Status) string {

@@ -3,6 +3,7 @@ package quest
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,12 +24,23 @@ type EventEntry struct {
 	CreatedAt time.Time
 }
 
+// DependencyState is the status snapshot for one dependency named by a
+// quest's depends_on list.
+type DependencyState struct {
+	ID      string `json:"id"`
+	Status  Status `json:"status,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Done    bool   `json:"done"`
+	Missing bool   `json:"missing,omitempty"`
+}
+
 // ScrollResult is the full history view of a quest: resolved spec,
 // current status, all notes, and all events in chronological order.
 type ScrollResult struct {
-	Quest  *Quest
-	Notes  []NoteEntry
-	Events []EventEntry
+	Quest        *Quest
+	Dependencies []DependencyState
+	Notes        []NoteEntry
+	Events       []EventEntry
 }
 
 // Scroll returns the full history of questID: current status, all notes,
@@ -62,11 +74,45 @@ func Scroll(ctx context.Context, db *sql.DB, projectID, questID string) (*Scroll
 		return nil, err
 	}
 
+	deps, err := loadDependencyStates(ctx, db, projectID, q.DependsOn)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ScrollResult{
-		Quest:  q,
-		Notes:  notes,
-		Events: events,
+		Quest:        q,
+		Dependencies: deps,
+		Notes:        notes,
+		Events:       events,
 	}, nil
+}
+
+func loadDependencyStates(ctx context.Context, db *sql.DB, projectID string, depIDs []string) ([]DependencyState, error) {
+	if len(depIDs) == 0 {
+		return nil, nil
+	}
+	out := make([]DependencyState, 0, len(depIDs))
+	for _, depID := range depIDs {
+		depID = strings.ToUpper(strings.TrimSpace(depID))
+		if depID == "" {
+			continue
+		}
+		q, err := Load(ctx, db, projectID, depID)
+		if errors.Is(err, ErrNotFound) {
+			out = append(out, DependencyState{ID: depID, Missing: true})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("quest: scroll: load dependency %s: %w", depID, err)
+		}
+		out = append(out, DependencyState{
+			ID:      q.ID,
+			Status:  q.Status,
+			Subject: q.Subject,
+			Done:    q.Status == StatusDone,
+		})
+	}
+	return out, nil
 }
 
 // loadNotes returns all task_notes rows for questID, oldest first.

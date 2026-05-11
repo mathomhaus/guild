@@ -3,6 +3,8 @@ package quest
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -19,6 +21,52 @@ func TestPost_MonotonicID(t *testing.T) {
 	}
 	if q3.ID != "QUEST-3" {
 		t.Errorf("q3.ID = %q, want QUEST-3", q3.ID)
+	}
+}
+
+func TestPost_ConcurrentWritersAllocateUniqueIDs(t *testing.T) {
+	db, pid := newTestDB(t)
+	ctx := context.Background()
+	const writers = 32
+
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	ids := make(chan string, writers)
+	for i := 0; i < writers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			q, err := Post(ctx, db, pid, PostParams{Subject: fmt.Sprintf("concurrent-%02d", i)})
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- q.ID
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(ids)
+
+	for err := range errs {
+		t.Errorf("Post returned error under contention: %v", err)
+	}
+	seen := map[string]bool{}
+	for id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate id allocated: %s", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) != writers {
+		t.Fatalf("allocated %d IDs, want %d", len(seen), writers)
+	}
+	for i := 1; i <= writers; i++ {
+		id := fmt.Sprintf("QUEST-%d", i)
+		if !seen[id] {
+			t.Fatalf("missing allocated id %s; got %v", id, seen)
+		}
 	}
 }
 

@@ -45,6 +45,7 @@ func (c *Command[I, O]) BindCobra(parent *cobra.Command, d Deps) {
 		Aliases:      c.CLIAliases,
 		Short:        c.Short,
 		Long:         c.Long,
+		Example:      c.CLIExample,
 		Args:         cobraPositionalValidator(c.Args),
 		SilenceUsage: true,
 	}
