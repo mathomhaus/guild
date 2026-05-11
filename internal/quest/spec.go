@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -93,7 +94,7 @@ func applyNote(q *Quest, note string) {
 // replace=true means list fields reset BEFORE append. Scalar fields are
 // last-value-wins regardless of replace mode.
 func applyPayload(q *Quest, payload string, replace bool) {
-	for _, part := range strings.Split(payload, "; ") {
+	for _, part := range splitSpecParts(payload) {
 		k, v, ok := splitKV(part)
 		if !ok {
 			continue
@@ -104,7 +105,7 @@ func applyPayload(q *Quest, payload string, replace bool) {
 				// Each acceptance note carries exactly one criterion —
 				// don't comma-split the value. Preserves boundaries.
 				if v != "" {
-					items = []string{v}
+					items = []string{decodeSpecValue(v)}
 				}
 			} else {
 				items = splitCommaList(v)
@@ -114,6 +115,33 @@ func applyPayload(q *Quest, payload string, replace bool) {
 		}
 		assignScalarField(q, k, v)
 	}
+}
+
+func splitSpecParts(payload string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(payload)-1; i++ {
+		if payload[i] != ';' || payload[i+1] != ' ' {
+			continue
+		}
+		if !startsSpecField(payload[i+2:]) {
+			continue
+		}
+		parts = append(parts, payload[start:i])
+		start = i + 2
+		i++
+	}
+	parts = append(parts, payload[start:])
+	return parts
+}
+
+func startsSpecField(s string) bool {
+	for _, key := range []string{"subject", "priority", "epic", "effort", "files", "acceptance", "depends_on", "blocks"} {
+		if strings.HasPrefix(s, key+":") {
+			return true
+		}
+	}
+	return false
 }
 
 // splitKV splits "key: value" into (key, value, ok). Returns ok=false
@@ -153,13 +181,14 @@ func splitCommaList(s string) []string {
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			out = append(out, p)
+			out = append(out, decodeSpecValue(p))
 		}
 	}
 	return out
 }
 
 func assignScalarField(q *Quest, k, v string) {
+	v = decodeSpecValue(v)
 	switch k {
 	case "subject":
 		q.Subject = v
@@ -170,6 +199,23 @@ func assignScalarField(q *Quest, k, v string) {
 	case "effort":
 		q.Effort = v
 	}
+}
+
+const specEncodedPrefix = "url:"
+
+func encodeSpecValue(v string) string {
+	return specEncodedPrefix + url.QueryEscape(v)
+}
+
+func decodeSpecValue(v string) string {
+	if !strings.HasPrefix(v, specEncodedPrefix) {
+		return v
+	}
+	decoded, err := url.QueryUnescape(strings.TrimPrefix(v, specEncodedPrefix))
+	if err != nil {
+		return v
+	}
+	return decoded
 }
 
 func assignListField(q *Quest, k string, items []string, replace bool) {

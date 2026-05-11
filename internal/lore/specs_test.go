@@ -1,11 +1,14 @@
 package lore_test
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mathomhaus/guild/internal/command"
 	"github.com/mathomhaus/guild/internal/lore"
+	"github.com/spf13/cobra"
 )
 
 // TestAllCommandSpecs_ArgFieldKindAlignment is the lore-side sibling of
@@ -41,4 +44,32 @@ func TestAllCommandSpecs_ArgFieldKindAlignment(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInscribeCommand_ExposesStrictProjectOnCLIAndMCP(t *testing.T) {
+	parent := &cobra.Command{Use: "lore"}
+	lore.InscribeCommand.BindCobra(parent, command.Deps{})
+	sub := findSubcommand(parent, "inscribe")
+	if sub == nil {
+		t.Fatal("inscribe subcommand not registered")
+	}
+	if sub.Flags().Lookup("strict-project") == nil {
+		t.Fatal("inscribe command missing --strict-project flag")
+	}
+
+	tool := lore.InscribeCommand.BuildMCPForTest(command.Deps{})
+	buf, _ := json.Marshal(tool.InputSchema)
+	schema := string(buf)
+	if !strings.Contains(schema, `"strict_project"`) {
+		t.Fatalf("lore_inscribe schema missing strict_project:\n%s", schema)
+	}
+}
+
+func findSubcommand(parent *cobra.Command, name string) *cobra.Command {
+	for _, cmd := range parent.Commands() {
+		if cmd.Name() == name {
+			return cmd
+		}
+	}
+	return nil
 }

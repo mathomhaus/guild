@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -669,13 +670,14 @@ func TestMCPInstall_Run_RegistersWhenAbsent(t *testing.T) {
 // pre-check. It accepts the common CLI output formats and rejects
 // incidental mentions of "guild" inside command-value strings.
 func TestScanForGuildEntry(t *testing.T) {
+	guildBin := filepath.Join(t.TempDir(), "bin", "guild")
 	cases := []struct {
 		name     string
 		in       string
 		want     bool
 		wantPath string
 	}{
-		{"claude human", "guild: /usr/local/bin/guild mcp serve\n", true, "/usr/local/bin/guild"},
+		{"claude human", "guild: " + guildBin + " mcp serve\n", true, guildBin},
 		{"list marker", "- guild\n- other\n", true, ""},
 		{"bare token", "guild\n", true, ""},
 		{"mixed list", "  * other\n  * guild: /bin/guild\n", true, "/bin/guild"},

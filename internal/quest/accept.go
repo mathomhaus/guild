@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // trailWriterFunc is the signature for post-claim observability writes.
@@ -152,8 +154,7 @@ func Accept(ctx context.Context, db *sql.DB, projectID, taskID, owner string) (*
 //
 // For non-BUSY errors we return the raw error wrapped.
 func toAlreadyClaimedOrErr(ctx context.Context, db *sql.DB, projectID, taskID string, err error) error {
-	msg := err.Error()
-	if !isBusyErr(msg) {
+	if !storage.IsBusyErr(err) {
 		return fmt.Errorf("quest: accept: update: %w", err)
 	}
 	var curStatus, curOwner sql.NullString
@@ -169,15 +170,6 @@ func toAlreadyClaimedOrErr(ctx context.Context, db *sql.DB, projectID, taskID st
 	}
 }
 
-// isBusyErr reports whether err looks like a SQLITE_BUSY from the
-// modernc driver. We match on the substring rather than unwrapping a
-// typed error because the driver returns a plain error whose string
-// contains "database is locked (5) (SQLITE_BUSY)".
-func isBusyErr(msg string) bool {
-	return strings.Contains(msg, "SQLITE_BUSY") ||
-		strings.Contains(msg, "database is locked")
-}
-
 // writeAcceptTrail writes the `claimed` event and the auto-checkpoint
 // note into a small follow-up transaction. Non-critical for atomicity.
 // Retries on SQLITE_BUSY because these writes are still subject to
@@ -188,7 +180,7 @@ func writeAcceptTrail(ctx context.Context, db *sql.DB, projectID, taskID, owner,
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusyErr(err) {
 				return fmt.Errorf("quest: accept: begin trail tx: %w", err)
 			}
 			continue
@@ -196,7 +188,7 @@ func writeAcceptTrail(ctx context.Context, db *sql.DB, projectID, taskID, owner,
 		if err := emitEvent(ctx, tx, projectID, taskID, EventClaimed, owner, "", createdAt); err != nil {
 			_ = tx.Rollback()
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusyErr(err) {
 				return err
 			}
 			continue
@@ -209,14 +201,14 @@ func writeAcceptTrail(ctx context.Context, db *sql.DB, projectID, taskID, owner,
 		); err != nil {
 			_ = tx.Rollback()
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusyErr(err) {
 				return fmt.Errorf("quest: accept: write checkpoint: %w", err)
 			}
 			continue
 		}
 		if err := tx.Commit(); err != nil {
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusyErr(err) {
 				return fmt.Errorf("quest: accept: commit trail: %w", err)
 			}
 			continue

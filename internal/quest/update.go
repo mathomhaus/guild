@@ -103,16 +103,16 @@ func Update(ctx context.Context, db *sql.DB, projectID, taskID string, params Up
 	// one [spec] note so read-time replay applies them atomically.
 	var appendParts []string
 	if v := strings.TrimSpace(params.Subject); v != "" {
-		appendParts = append(appendParts, "subject: "+v)
+		appendParts = append(appendParts, "subject: "+encodeSpecValue(v))
 	}
 	if v := strings.TrimSpace(string(params.Priority)); v != "" {
 		appendParts = append(appendParts, "priority: "+v)
 	}
 	if v := strings.TrimSpace(params.Epic); v != "" {
-		appendParts = append(appendParts, "epic: "+v)
+		appendParts = append(appendParts, "epic: "+encodeSpecValue(v))
 	}
 	if v := strings.TrimSpace(params.Effort); v != "" {
-		appendParts = append(appendParts, "effort: "+v)
+		appendParts = append(appendParts, "effort: "+encodeSpecValue(v))
 	}
 
 	var newDepIDs []string
@@ -201,12 +201,12 @@ func Update(ctx context.Context, db *sql.DB, projectID, taskID string, params Up
 		} else {
 			// First criterion [spec-replace] resets; rest [spec] append.
 			if err := insertSpecNote(ctx, conn, projectID, taskID, agent, now,
-				NotePrefixSpecReplace+"acceptance: "+crits[0]); err != nil {
+				NotePrefixSpecReplace+"acceptance: "+encodeSpecValue(crits[0])); err != nil {
 				return nil, err
 			}
 			for _, c := range crits[1:] {
 				if err := insertSpecNote(ctx, conn, projectID, taskID, agent, now,
-					NotePrefixSpec+"acceptance: "+c); err != nil {
+					NotePrefixSpec+"acceptance: "+encodeSpecValue(c)); err != nil {
 					return nil, err
 				}
 			}
@@ -219,7 +219,7 @@ func Update(ctx context.Context, db *sql.DB, projectID, taskID string, params Up
 				continue
 			}
 			if err := insertSpecNote(ctx, conn, projectID, taskID, agent, now,
-				NotePrefixSpec+"acceptance: "+c); err != nil {
+				NotePrefixSpec+"acceptance: "+encodeSpecValue(c)); err != nil {
 				return nil, err
 			}
 		}

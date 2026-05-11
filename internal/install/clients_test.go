@@ -100,6 +100,9 @@ func TestClients_WellFormed(t *testing.T) {
 		if c.CLIProbe == "" && c.ConfigProbe == "" {
 			t.Errorf("client %q has neither CLIProbe nor ConfigProbe", c.Name)
 		}
+		if c.ListArgv == nil {
+			t.Errorf("client %q has nil ListArgv; repeat init cannot pre-check registration", c.Name)
+		}
 	}
 }
 

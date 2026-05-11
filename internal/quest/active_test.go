@@ -56,6 +56,39 @@ func TestActive_CrossProject(t *testing.T) {
 	}
 }
 
+func TestActiveForProject_FiltersToProject(t *testing.T) {
+	db, pid1 := newTestDB(t)
+	ctx := context.Background()
+
+	pid2 := "testproj2"
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO projects (id, path, tasks_file) VALUES (?, ?, ?)`,
+		pid2, t.TempDir(), "TASKS.md",
+	); err != nil {
+		t.Fatalf("register project2: %v", err)
+	}
+
+	q1 := mustPost(t, db, pid1, PostParams{Subject: "proj1 task"})
+	q2 := mustPost(t, db, pid2, PostParams{Subject: "proj2 task"})
+	if _, err := Accept(ctx, db, pid1, q1.ID, "agent-a"); err != nil {
+		t.Fatalf("accept1: %v", err)
+	}
+	if _, err := Accept(ctx, db, pid2, q2.ID, "agent-b"); err != nil {
+		t.Fatalf("accept2: %v", err)
+	}
+
+	qs, err := ActiveForProject(ctx, db, pid2)
+	if err != nil {
+		t.Fatalf("ActiveForProject: %v", err)
+	}
+	if len(qs) != 1 {
+		t.Fatalf("want 1 active in %s, got %d", pid2, len(qs))
+	}
+	if qs[0].ID != q2.ID || qs[0].Subject != "proj2 task" {
+		t.Fatalf("got %#v, want project2 quest %s", qs[0], q2.ID)
+	}
+}
+
 func TestActive_ExcludesNonInProgress(t *testing.T) {
 	db, pid := newTestDB(t)
 	ctx := context.Background()

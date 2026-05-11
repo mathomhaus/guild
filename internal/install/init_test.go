@@ -467,6 +467,51 @@ func TestInit_MCPRegistration_YesFlagInvokesExec(t *testing.T) {
 	}
 }
 
+func TestInit_MCPRegistration_SkipsDetectedClientWhenCLIMissing(t *testing.T) {
+	ctx := context.Background()
+	dir := makeRepo(t, "missingcli")
+	loreDB, questDB := testDBPaths(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".missing-client.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write config probe: %v", err)
+	}
+
+	var out bytes.Buffer
+	var calls [][]string
+	client := Client{
+		Name:        "Missing CLI",
+		CLIProbe:    "missing-client-cli",
+		ConfigProbe: "~/.missing-client.json",
+		InstallArgv: func(b string) []string {
+			return []string{"missing-client-cli", "mcp", "add", "guild", "--", b, "mcp", "serve"}
+		},
+	}
+
+	_, err := Init(ctx, dir, InitOptions{
+		Yes:          true,
+		Out:          &out,
+		In:           &bytes.Buffer{},
+		LoreDBPath:   loreDB,
+		QuestDBPath:  questDB,
+		clients:      []Client{client},
+		execCmdFn:    recordingExec(&calls),
+		executableFn: fakeExecutable(t),
+		lookPathFn: func(string) (string, error) {
+			return "", exec.ErrNotFound
+		},
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("registration exec calls = %v, want none", calls)
+	}
+	if !strings.Contains(out.String(), "skipping Missing CLI: missing-client-cli not on PATH") {
+		t.Fatalf("output missing missing-CLI skip notice:\n%s", out.String())
+	}
+}
+
 // Interactive path: user types "y" — init must invoke registration.
 func TestInit_MCPRegistration_InteractiveYes(t *testing.T) {
 	ctx := context.Background()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -143,6 +144,29 @@ func TestCatalog_KindInference(t *testing.T) {
 	}
 	if researchCount != 1 {
 		t.Errorf("research count = %d; want 1", researchCount)
+	}
+}
+
+func TestCatalog_RejectsInvalidKindOverride(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "catalog-invalid-kind")
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte("# Note\n\nSome content."), 0o600); err != nil {
+		t.Fatalf("write note.md: %v", err)
+	}
+
+	_, err := Catalog(ctx, db, &CatalogParams{
+		Dir:       dir,
+		ProjectID: "catalog-invalid-kind",
+		Kind:      Kind("not-a-real-kind"),
+	})
+	if err == nil {
+		t.Fatal("Catalog with invalid kind should return error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "not-a-real-kind") || !strings.Contains(msg, "idea") || !strings.Contains(msg, "principle") {
+		t.Fatalf("error %q should include invalid and valid kinds", msg)
 	}
 }
 

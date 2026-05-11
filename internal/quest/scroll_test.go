@@ -129,3 +129,36 @@ func TestScroll_OrderChronological(t *testing.T) {
 		t.Errorf("notes not in chronological order: %v", found)
 	}
 }
+
+func TestScroll_OrderChronologicalUsesIDTieBreaker(t *testing.T) {
+	db, pid := newTestDB(t)
+	ctx := context.Background()
+
+	q := mustPost(t, db, pid, PostParams{Subject: "same timestamp ordering"})
+	stamp := "2026-05-11T00:00:00Z"
+	for _, note := range []string{"same-time-1", "same-time-2", "same-time-3"} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO task_notes (project_id, task_id, agent_id, note, created_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			pid, q.ID, "agent", note, stamp,
+		); err != nil {
+			t.Fatalf("insert note %q: %v", note, err)
+		}
+	}
+
+	res, err := Scroll(ctx, db, pid, q.ID)
+	if err != nil {
+		t.Fatalf("Scroll: %v", err)
+	}
+
+	var found []string
+	for _, n := range res.Notes {
+		if strings.HasPrefix(n.Note, "same-time-") {
+			found = append(found, n.Note)
+		}
+	}
+	want := []string{"same-time-1", "same-time-2", "same-time-3"}
+	if strings.Join(found, ",") != strings.Join(want, ",") {
+		t.Fatalf("same-timestamp notes = %v, want %v", found, want)
+	}
+}

@@ -101,15 +101,15 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 
 	// Combined [spec] for scalars. Subject is always present (validated
 	// above); the rest are conditional.
-	scalarParts := []string{fmt.Sprintf("subject: %s", params.Subject)}
+	scalarParts := []string{fmt.Sprintf("subject: %s", encodeSpecValue(params.Subject))}
 	if p := strings.TrimSpace(string(params.Priority)); p != "" {
 		scalarParts = append(scalarParts, "priority: "+p)
 	}
 	if e := strings.TrimSpace(params.Epic); e != "" {
-		scalarParts = append(scalarParts, "epic: "+e)
+		scalarParts = append(scalarParts, "epic: "+encodeSpecValue(e))
 	}
 	if e := strings.TrimSpace(params.Effort); e != "" {
-		scalarParts = append(scalarParts, "effort: "+e)
+		scalarParts = append(scalarParts, "effort: "+encodeSpecValue(e))
 	}
 	if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
 		NotePrefixSpec+strings.Join(scalarParts, "; ")); err != nil {
@@ -136,7 +136,7 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 			continue
 		}
 		if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
-			NotePrefixSpec+"acceptance: "+crit); err != nil {
+			NotePrefixSpec+"acceptance: "+encodeSpecValue(crit)); err != nil {
 			return nil, err
 		}
 	}

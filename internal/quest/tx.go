@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // beginImmediate acquires a dedicated *sql.Conn from db, then issues
@@ -43,7 +45,7 @@ func beginImmediate(ctx context.Context, db *sql.DB, opName string) (*sql.Conn, 
 		if beginErr == nil {
 			break
 		}
-		if !isBusyErr(beginErr.Error()) {
+		if !storage.IsBusyErr(beginErr) {
 			_ = conn.Close()
 			return nil, nil, fmt.Errorf("quest: %s: begin immediate: %w", opName, beginErr)
 		}

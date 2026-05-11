@@ -6,20 +6,38 @@ import (
 	"fmt"
 )
 
-// Active returns all quests currently in status='in_progress' across
-// every project registered in the DB. The result is sorted by
-// project_id ascending, then claimed_at ascending (oldest first within
-// each project).
+// Active returns all quests currently in status='in_progress' across every
+// project registered in the DB.
 func Active(ctx context.Context, db *sql.DB) ([]*Quest, error) {
+	return active(ctx, db, "")
+}
+
+// ActiveForProject returns all quests currently in status='in_progress' for one
+// project only.
+func ActiveForProject(ctx context.Context, db *sql.DB, projectID string) ([]*Quest, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("quest: active: empty project_id")
+	}
+	return active(ctx, db, projectID)
+}
+
+// active is sorted by project_id ascending, then claimed_at ascending (oldest
+// first within each project). Passing projectID filters to that project.
+func active(ctx context.Context, db *sql.DB, projectID string) ([]*Quest, error) {
 	if db == nil {
 		return nil, fmt.Errorf("quest: active: nil db")
 	}
 
-	rows, err := db.QueryContext(ctx,
-		`SELECT project_id, task_id FROM task_status
-		 WHERE status = 'in_progress'
-		 ORDER BY project_id ASC, claimed_at ASC`,
-	)
+	query := `SELECT project_id, task_id FROM task_status
+		WHERE status = 'in_progress'`
+	var args []any
+	if projectID != "" {
+		query += ` AND project_id = ?`
+		args = append(args, projectID)
+	}
+	query += ` ORDER BY project_id ASC, claimed_at ASC`
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("quest: active: query: %w", err)
 	}

@@ -298,7 +298,7 @@ func Pulse(ctx context.Context, db *sql.DB, projectID string, window time.Durati
 			payload = note[len(NotePrefixSpec):]
 		}
 		// Payload format: "files: a.go, b.go"
-		for _, part := range strings.Split(payload, "; ") {
+		for _, part := range splitSpecParts(payload) {
 			k, v, ok := splitKV(part)
 			if !ok || k != "files" {
 				continue

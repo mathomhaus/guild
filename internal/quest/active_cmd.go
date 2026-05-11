@@ -28,10 +28,8 @@ var ActiveCommand = &command.Command[ActiveInput, ActiveOutput]{
 		{Name: "project", Short: "p", Kind: command.ArgFlag, Type: command.ArgString, Help: "project override"},
 	},
 	Handler: func(ctx context.Context, d command.Deps, in ActiveInput) (ActiveOutput, error) {
-		// Active() doesn't need a resolved project, but the MCP path
-		// requires an active session — call ResolveProj for the side
-		// effect of validating bootstrap, discard the result.
-		if _, err := d.ResolveProj(ctx, in.Project); err != nil {
+		pid, err := d.ResolveProj(ctx, in.Project)
+		if err != nil {
 			return ActiveOutput{}, err
 		}
 		db, err := d.OpenDB(ctx)
@@ -39,7 +37,12 @@ var ActiveCommand = &command.Command[ActiveInput, ActiveOutput]{
 			return ActiveOutput{}, err
 		}
 		defer func() { _ = db.Close() }()
-		qs, err := Active(ctx, db)
+		var qs []*Quest
+		if strings.TrimSpace(in.Project) != "" {
+			qs, err = ActiveForProject(ctx, db, pid)
+		} else {
+			qs, err = Active(ctx, db)
+		}
 		if err != nil {
 			return ActiveOutput{}, err
 		}

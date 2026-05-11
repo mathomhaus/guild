@@ -101,6 +101,36 @@ func TestUpdate_ListAppend_Acceptance_PreservesCommas(t *testing.T) {
 	if got.Acceptance[0] != "foo, bar, baz" {
 		t.Errorf("acc[0] = %q", got.Acceptance[0])
 	}
+	if got.Acceptance[1] != "one; two" {
+		t.Errorf("acc[1] = %q", got.Acceptance[1])
+	}
+}
+
+func TestUpdate_SpecValuesPreserveSemicolons(t *testing.T) {
+	db, pid := newTestDB(t)
+	q := mustPost(t, db, pid, PostParams{Subject: "original"})
+	if _, err := Update(context.Background(), db, pid, q.ID, UpdateParams{
+		Subject:    "updated; subject",
+		Epic:       "updated; epic",
+		Effort:     "updated; effort",
+		Acceptance: []string{"updated; acceptance"},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got := mustLoad(t, db, pid, q.ID)
+	if got.Subject != "updated; subject" {
+		t.Errorf("subject = %q", got.Subject)
+	}
+	if got.Epic != "updated; epic" {
+		t.Errorf("epic = %q", got.Epic)
+	}
+	if got.Effort != "updated; effort" {
+		t.Errorf("effort = %q", got.Effort)
+	}
+	if len(got.Acceptance) != 1 || got.Acceptance[0] != "updated; acceptance" {
+		t.Errorf("acceptance = %v", got.Acceptance)
+	}
 }
 
 func TestUpdate_ConflictingAppendAndReplace(t *testing.T) {

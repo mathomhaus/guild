@@ -87,6 +87,9 @@ type InitOptions struct {
 	// execCmdFn is passed through to MCPInstall when invoking MCP registration.
 	// Nil → real exec.Command. Injected in tests to capture the registration call.
 	execCmdFn func(name string, arg ...string) *exec.Cmd
+	// lookPathFn is passed through to MCPInstall when checking detected client
+	// CLI binaries. Nil → exec.LookPath.
+	lookPathFn func(file string) (string, error)
 	// executableFn is passed through to MCPInstall for binary-path resolution.
 	// Nil → os.Executable. Injected in tests so CI runners (which have no
 	// durable guild binary installed) can resolve to a temp-file path and
@@ -297,6 +300,7 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 			clients:      detected,
 			executableFn: execFn,
 			execCmdFn:    opts.execCmdFn,
+			lookPathFn:   opts.lookPathFn,
 		}
 		if _, err := MCPInstall(ctx, mcpOpts); err != nil {
 			return nil, fmt.Errorf("install: mcp register: %w", err)
@@ -422,7 +426,7 @@ func resolveDBPaths(opts InitOptions) (loreDB, questDB string, err error) {
 		return "", "", fmt.Errorf("install: resolve home dir: %w", err)
 	}
 	guildDir := filepath.Join(home, ".guild")
-	if err := os.MkdirAll(guildDir, 0o755); err != nil {
+	if err := os.MkdirAll(guildDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("install: create ~/.guild: %w", err)
 	}
 	if loreDB == "" {

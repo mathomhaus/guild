@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // beginImmediate is the lore-package-local helper matching the one in
@@ -38,7 +39,7 @@ func beginImmediate(ctx context.Context, db *sql.DB, opName string) (*sql.Conn, 
 		if beginErr == nil {
 			break
 		}
-		if !isBusyErr(beginErr.Error()) {
+		if !storage.IsBusyErr(beginErr) {
 			_ = conn.Close()
 			return nil, nil, fmt.Errorf("%s: begin immediate: %w", opName, beginErr)
 		}
@@ -65,13 +66,4 @@ func beginImmediate(ctx context.Context, db *sql.DB, opName string) (*sql.Conn, 
 		}
 	}
 	return conn, rollback, nil
-}
-
-// isBusyErr reports whether err looks like a SQLITE_BUSY from the
-// modernc driver. Matches on the substring rather than a typed error
-// because modernc returns a plain error whose string contains
-// "database is locked (5) (SQLITE_BUSY)".
-func isBusyErr(msg string) bool {
-	return strings.Contains(msg, "SQLITE_BUSY") ||
-		strings.Contains(msg, "database is locked")
 }

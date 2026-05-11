@@ -17,7 +17,8 @@ type EmbedderHealthInput struct {
 
 // EmbedderHealthCmdOutput wraps the HealthReport for the command registry.
 type EmbedderHealthCmdOutput struct {
-	Report *embed.HealthReport `json:"report"`
+	Report      *embed.HealthReport `json:"report"`
+	QuestReport *embed.HealthReport `json:"quest_report,omitempty"`
 }
 
 // EmbedderHealthCommand is the registry spec for `guild lore health`.
@@ -53,7 +54,19 @@ var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealth
 		if err != nil {
 			return EmbedderHealthCmdOutput{}, fmt.Errorf("lore: health: %w", err)
 		}
-		return EmbedderHealthCmdOutput{Report: report}, nil
+		var questReport *embed.HealthReport
+		if d.OpenQuestDB != nil {
+			questDB, err := d.OpenQuestDB(ctx)
+			if err != nil {
+				return EmbedderHealthCmdOutput{}, fmt.Errorf("lore: health: open quest db: %w", err)
+			}
+			defer func() { _ = questDB.Close() }()
+			questReport, err = embed.ReadHealthReport(ctx, questDB, embed.QuestCorpus{})
+			if err != nil {
+				return EmbedderHealthCmdOutput{}, fmt.Errorf("lore: health: quest corpus: %w", err)
+			}
+		}
+		return EmbedderHealthCmdOutput{Report: report, QuestReport: questReport}, nil
 	},
 	CLIFormat: func(s command.CLISink, o EmbedderHealthCmdOutput) string {
 		return formatEmbedderHealth(s, o)
@@ -66,56 +79,62 @@ var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealth
 // formatEmbedderHealth renders the embedder health section.
 // Works for both CLI and MCP sinks (both satisfy the lineSink interface).
 func formatEmbedderHealth(s lineSink, o EmbedderHealthCmdOutput) string {
-	r := o.Report
-	if r == nil {
+	if o.Report == nil {
 		return strings.TrimRight(s.Line("🔮", "[health]", "embedder: no data available"), "\n")
 	}
 
 	var b strings.Builder
 	b.WriteString(s.Line("🔮", "[health]", "embedder section"))
+	writeHealthReport(&b, "lore corpus", o.Report)
+	if o.QuestReport != nil {
+		b.WriteString("\n")
+		writeHealthReport(&b, "quest corpus", o.QuestReport)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
+func writeHealthReport(b *strings.Builder, label string, r *embed.HealthReport) {
+	b.WriteString(fmt.Sprintf("  %s:\n", label))
 	// State line.
 	stateStr := string(r.State)
 	sessionLine := r.SessionLine()
 	if sessionLine != "" {
 		stateStr += fmt.Sprintf(": %s", sessionLine)
 	}
-	b.WriteString(fmt.Sprintf("  state:           %s\n", stateStr))
+	b.WriteString(fmt.Sprintf("    state:           %s\n", stateStr))
 
 	// Identity fields.
-	b.WriteString(fmt.Sprintf("  model_id:        %s\n", orNA(r.ModelID)))
-	b.WriteString(fmt.Sprintf("  tokenizer_hash:  %s\n", orNA(r.TokenizerHash)))
-	b.WriteString(fmt.Sprintf("  runtime_version: %s\n", orNA(r.RuntimeVersion)))
-	b.WriteString(fmt.Sprintf("  dim:             %d\n", r.Dim))
+	b.WriteString(fmt.Sprintf("    model_id:        %s\n", orNA(r.ModelID)))
+	b.WriteString(fmt.Sprintf("    tokenizer_hash:  %s\n", orNA(r.TokenizerHash)))
+	b.WriteString(fmt.Sprintf("    runtime_version: %s\n", orNA(r.RuntimeVersion)))
+	b.WriteString(fmt.Sprintf("    dim:             %d\n", r.Dim))
 
 	// Coverage.
-	b.WriteString(fmt.Sprintf("  coverage:        %d/%d (%.1f%%)\n",
+	b.WriteString(fmt.Sprintf("    coverage:        %d/%d (%.1f%%)\n",
 		r.CoverageNum, r.CoverageDen, r.CoveragePct))
-	b.WriteString(fmt.Sprintf("  pending:         %d\n", r.PendingCount))
-	b.WriteString(fmt.Sprintf("  stale:           %d\n", r.StaleCount))
-	b.WriteString(fmt.Sprintf("  vector_epoch:    %d\n", r.VectorEpoch))
+	b.WriteString(fmt.Sprintf("    pending:         %d\n", r.PendingCount))
+	b.WriteString(fmt.Sprintf("    stale:           %d\n", r.StaleCount))
+	b.WriteString(fmt.Sprintf("    vector_epoch:    %d\n", r.VectorEpoch))
 
 	// Error tracking.
-	b.WriteString(fmt.Sprintf("  embed_errors:    %d (rolling)\n", r.EmbedErrorCount))
+	b.WriteString(fmt.Sprintf("    embed_errors:    %d (rolling)\n", r.EmbedErrorCount))
 
 	if r.LastEncodeError != "" {
 		errLine := r.LastEncodeError
 		if r.LastEncodeErrAt != nil {
 			errLine += fmt.Sprintf(" (at %s)", r.LastEncodeErrAt.Format(time.RFC3339))
 		}
-		b.WriteString(fmt.Sprintf("  last_error:      %s\n", errLine))
+		b.WriteString(fmt.Sprintf("    last_error:      %s\n", errLine))
 	}
 
 	if r.LastEncodeOKAt != nil {
-		b.WriteString(fmt.Sprintf("  last_ok_at:      %s\n", r.LastEncodeOKAt.Format(time.RFC3339)))
+		b.WriteString(fmt.Sprintf("    last_ok_at:      %s\n", r.LastEncodeOKAt.Format(time.RFC3339)))
 	}
 
 	// Session-start line preview (only when non-healthy).
 	if sessionLine != "" {
-		b.WriteString(fmt.Sprintf("  session_line:    %s\n", sessionLine))
+		b.WriteString(fmt.Sprintf("    session_line:    %s\n", sessionLine))
 	}
-
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // orNA returns s if non-empty, otherwise "(n/a)".

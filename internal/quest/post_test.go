@@ -122,6 +122,56 @@ func TestPost_AcceptancePreservesCommas(t *testing.T) {
 	}
 }
 
+func TestPost_SpecValuesPreserveSemicolons(t *testing.T) {
+	db, pid := newTestDB(t)
+	q := mustPost(t, db, pid, PostParams{
+		Subject: "split; but keep me together",
+		Epic:    "campaign; phase one",
+		Effort:  "review; verify",
+		Acceptance: []string{
+			"first; second; third",
+		},
+	})
+
+	got := mustLoad(t, db, pid, q.ID)
+	if got.Subject != "split; but keep me together" {
+		t.Errorf("subject = %q", got.Subject)
+	}
+	if got.Epic != "campaign; phase one" {
+		t.Errorf("epic = %q", got.Epic)
+	}
+	if got.Effort != "review; verify" {
+		t.Errorf("effort = %q", got.Effort)
+	}
+	if len(got.Acceptance) != 1 || got.Acceptance[0] != "first; second; third" {
+		t.Errorf("acceptance = %v", got.Acceptance)
+	}
+}
+
+func TestPost_SemicolonFieldsRoundTrip(t *testing.T) {
+	db, pid := newTestDB(t)
+	q := mustPost(t, db, pid, PostParams{
+		Subject:    "subject before; subject after",
+		Epic:       "epic before; epic after",
+		Effort:     "medium; weird but preserved",
+		Acceptance: []string{"criterion before; criterion after"},
+	})
+
+	got := mustLoad(t, db, pid, q.ID)
+	if got.Subject != "subject before; subject after" {
+		t.Errorf("subject = %q", got.Subject)
+	}
+	if got.Epic != "epic before; epic after" {
+		t.Errorf("epic = %q", got.Epic)
+	}
+	if got.Effort != "medium; weird but preserved" {
+		t.Errorf("effort = %q", got.Effort)
+	}
+	if len(got.Acceptance) != 1 || got.Acceptance[0] != "criterion before; criterion after" {
+		t.Errorf("acceptance = %v", got.Acceptance)
+	}
+}
+
 func TestLoad_NotFound(t *testing.T) {
 	db, pid := newTestDB(t)
 	_, err := Load(context.Background(), db, pid, "QUEST-404")
