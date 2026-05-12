@@ -72,7 +72,7 @@ func Scroll(ctx context.Context, db *sql.DB, projectID, questID string) (*Scroll
 // loadNotes returns all task_notes rows for questID, oldest first.
 func loadNotes(ctx context.Context, db *sql.DB, projectID, questID string) ([]NoteEntry, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT agent_id, note, created_at
+		`SELECT id, agent_id, note, created_at
 		 FROM task_notes
 		 WHERE project_id = ? AND task_id = ?
 		 ORDER BY created_at ASC, id ASC`,
@@ -85,8 +85,9 @@ func loadNotes(ctx context.Context, db *sql.DB, projectID, questID string) ([]No
 
 	var out []NoteEntry
 	for rows.Next() {
+		var id int64
 		var agentID, note, createdAt string
-		if err := rows.Scan(&agentID, &note, &createdAt); err != nil {
+		if err := rows.Scan(&id, &agentID, &note, &createdAt); err != nil {
 			return nil, fmt.Errorf("quest: scroll: scan note: %w", err)
 		}
 		t := parseNoteTime(createdAt)
@@ -101,7 +102,7 @@ func loadNotes(ctx context.Context, db *sql.DB, projectID, questID string) ([]No
 // loadEvents returns all task_events rows for questID, oldest first.
 func loadEvents(ctx context.Context, db *sql.DB, projectID, questID string) ([]EventEntry, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT event, COALESCE(agent_id,''), COALESCE(data,''), created_at
+		`SELECT id, event, COALESCE(agent_id,''), COALESCE(data,''), created_at
 		 FROM task_events
 		 WHERE project_id = ? AND task_id = ?
 		 ORDER BY created_at ASC, id ASC`,
@@ -114,8 +115,9 @@ func loadEvents(ctx context.Context, db *sql.DB, projectID, questID string) ([]E
 
 	var out []EventEntry
 	for rows.Next() {
+		var id int64
 		var event, agentID, data, createdAt string
-		if err := rows.Scan(&event, &agentID, &data, &createdAt); err != nil {
+		if err := rows.Scan(&id, &event, &agentID, &data, &createdAt); err != nil {
 			return nil, fmt.Errorf("quest: scroll: scan event: %w", err)
 		}
 		t := parseNoteTime(createdAt)
