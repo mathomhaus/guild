@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -178,5 +179,34 @@ func TestCatalog_NonExistentDir(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("Catalog on non-existent dir should return error")
+	}
+}
+
+func TestCatalog_InvalidKind(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "catalog-kind")
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte("# Note\n\nContent."), 0o600); err != nil {
+		t.Fatalf("write note.md: %v", err)
+	}
+
+	_, err := Catalog(ctx, db, &CatalogParams{
+		Dir:       dir,
+		ProjectID: "catalog-kind",
+		Kind:      "not-a-real-kind",
+	})
+	if err == nil {
+		t.Fatal("Catalog with invalid --kind should return error")
+	}
+	// Verify error mentions valid kinds.
+	for _, k := range AllKinds() {
+		if !strings.Contains(err.Error(), string(k)) {
+			t.Errorf("error %q does not contain valid kind %q", err.Error(), k)
+		}
+	}
+	// Verify error mentions the invalid kind.
+	if !strings.Contains(err.Error(), "not-a-real-kind") {
+		t.Errorf("error %q does not contain the invalid kind", err.Error())
 	}
 }

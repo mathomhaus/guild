@@ -38,6 +38,24 @@ var CatalogCommand = &command.Command[CatalogInput, CatalogCmdOutput]{
 		if strings.TrimSpace(in.Dir) == "" {
 			return CatalogCmdOutput{}, errors.New("dir required")
 		}
+		if in.Kind != "" {
+			valid := false
+			for _, k := range AllKinds() {
+				if Kind(in.Kind) == k {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return CatalogCmdOutput{}, fmt.Errorf("invalid --kind %q: valid kinds are: %s", in.Kind, strings.Join(func() []string {
+					kinds := make([]string, len(AllKinds()))
+					for i, k := range AllKinds() {
+						kinds[i] = string(k)
+					}
+					return kinds
+				}(), ", "))
+			}
+		}
 		db, err := d.OpenDB(ctx)
 		if err != nil {
 			return CatalogCmdOutput{}, err

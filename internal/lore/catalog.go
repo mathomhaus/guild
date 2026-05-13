@@ -62,6 +62,24 @@ func Catalog(ctx context.Context, db *sql.DB, p *CatalogParams) (*CatalogResult,
 	if strings.TrimSpace(p.Dir) == "" {
 		return nil, fmt.Errorf("lore: catalog: dir required")
 	}
+	if p.Kind != "" {
+		valid := false
+		for _, k := range AllKinds() {
+			if p.Kind == k {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, fmt.Errorf("lore: catalog: invalid kind %q: valid kinds are %s", p.Kind, strings.Join(func() []string {
+				kinds := make([]string, len(AllKinds()))
+				for i, k := range AllKinds() {
+					kinds[i] = string(k)
+				}
+				return kinds
+			}(), ", "))
+		}
+	}
 
 	info, err := os.Stat(p.Dir)
 	if err != nil {
