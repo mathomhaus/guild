@@ -30,14 +30,14 @@ func SetVersion(version, commit, date string) {
 var rootCmd = &cobra.Command{
 	Use:   "guild",
 	Short: "persistent cognition for AI agents — task + knowledge lifecycle",
-	Long: `guild bundles three modes in one static binary:
+	Long: `guild bundles two domains, two surfaces, and one store in a single binary:
 
   guild lore <verb>    knowledge lifecycle (inscribe, appraise, study, ...)
   guild quest <verb>   task lifecycle   (post, accept, clear, ...)
-  guild mcp serve      MCP stdio server for AI agents
+  guild mcp serve      MCP stdio surface for AI agents
 
-The lore, quest, and MCP surfaces share one SQLite-backed store under
-~/.guild/. See https://github.com/mathomhaus/guild for docs.
+The CLI and MCP surfaces share lore and quest data in one SQLite-backed store
+under ~/.guild/. See https://github.com/mathomhaus/guild for docs.
 
 Next step — if you haven't yet:
 
@@ -54,32 +54,36 @@ Environment variables:
 }
 
 var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "print guild version information",
+	Use:     "version",
+	Short:   "print guild version information",
+	GroupID: "inspection",
 	Run: func(_ *cobra.Command, _ []string) {
 		fmt.Printf("guild version=%s commit=%s date=%s\n", buildVersion, buildCommit, buildDate)
 	},
 }
 
 var loreCmd = &cobra.Command{
-	Use:   "lore",
-	Short: "knowledge lifecycle (read/write/decay/supersede)",
+	Use:     "lore",
+	Short:   "knowledge lifecycle (inscribe/appraise/study/reforge)",
+	GroupID: "core",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
 }
 
 var questCmd = &cobra.Command{
-	Use:   "quest",
-	Short: "task lifecycle (post/accept/journal/clear/coordinate)",
+	Use:     "quest",
+	Short:   "task lifecycle (post/accept/journal/clear/coordinate)",
+	GroupID: "core",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
 }
 
 var mcpCmd = &cobra.Command{
-	Use:   "mcp",
-	Short: "MCP server subcommands",
+	Use:     "mcp",
+	Short:   "MCP server subcommands",
+	GroupID: "core",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
@@ -121,6 +125,11 @@ func SetUpgradeNudge(fn func() string) {
 }
 
 func init() {
+	rootCmd.AddGroup(
+		&cobra.Group{ID: "core", Title: "Core"},
+		&cobra.Group{ID: "inspection", Title: "Inspection"},
+	)
+
 	// PersistentPreRun fires before every subcommand. We use it to emit
 	// an upgrade-available nudge when a newer guild release exists and
 	// stderr is a TTY. The isatty check happens here (not in SetUpgradeNudge)

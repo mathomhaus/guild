@@ -4,12 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+type codedSQLiteErr int
+
+func (e codedSQLiteErr) Error() string { return "sqlite coded error" }
+func (e codedSQLiteErr) Code() int     { return int(e) }
 
 // openTempDB is a test helper that opens a fresh sqlite DB under t.TempDir
 // and runs the canonical 001_init migration. Callers get a ready-to-use
@@ -47,6 +53,58 @@ func TestOpen_ReturnsUsableHandle(t *testing.T) {
 	}
 	if one != 1 {
 		t.Fatalf("want 1, got %d", one)
+	}
+}
+
+func TestOpen_TightensSQLiteFileModes(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "private.db")
+
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("%s mode = %o, want 600", path, got)
+	}
+
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.WriteFile(path+suffix, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write sidecar %s: %v", suffix, err)
+		}
+	}
+	if err := tightenSQLiteFileModes(path); err != nil {
+		t.Fatalf("tighten sidecars: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		info, err := os.Stat(path + suffix)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path+suffix, err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s mode = %o, want 600", path+suffix, got)
+		}
+	}
+}
+
+func TestIsBusyErr_UsesSQLiteCodes(t *testing.T) {
+	if !IsBusyErr(codedSQLiteErr(sqliteBusyCode)) {
+		t.Fatal("busy code was not recognized")
+	}
+	if !IsBusyErr(fmt.Errorf("wrapped: %w", codedSQLiteErr(0x100|sqliteLockedCode))) {
+		t.Fatal("extended locked code was not recognized")
+	}
+	if IsBusyErr(fmt.Errorf("SQLITE_BUSY string only")) {
+		t.Fatal("string-only error should not be treated as busy")
+	}
+	if IsBusyErr(codedSQLiteErr(1)) {
+		t.Fatal("non-busy sqlite code should not be treated as busy")
 	}
 }
 

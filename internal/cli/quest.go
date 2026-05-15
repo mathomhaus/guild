@@ -52,7 +52,7 @@ func openQuestDB(ctx context.Context) (*sql.DB, error) {
 	}
 	if path != ":memory:" && !strings.HasPrefix(path, ":memory:") {
 		if dir := filepath.Dir(path); dir != "." && dir != "/" {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return nil, fmt.Errorf("create %s: %w", dir, err)
 			}
 		}

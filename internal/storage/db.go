@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	// modernc.org/sqlite is a pure-Go SQLite driver (no CGO). Registering
@@ -72,8 +73,25 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("storage: ping %s: %w", path, err)
 	}
+	if err := tightenSQLiteFileModes(path); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("storage: secure %s: %w", path, err)
+	}
 
 	return db, nil
+}
+
+func tightenSQLiteFileModes(path string) error {
+	if path == ":memory:" || strings.HasPrefix(path, ":memory:") {
+		return nil
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		p := path + suffix
+		if err := os.Chmod(p, 0o600); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // buildDSN turns a filesystem path into a modernc.org/sqlite DSN with the

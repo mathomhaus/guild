@@ -47,6 +47,10 @@ var UpdateCommand = &command.Command[UpdateInput, UpdateOutput]{
 	CLIPath: []string{"quest", "update"},
 	Short:   "modify a quest's spec after post",
 	Long:    "Modify a quest's spec after post. Append lists via --files/-a/--depends-on/--blocks; replace via --replace-*; clear via --clear-*.",
+	CLIExample: strings.TrimSpace(`
+guild quest update QUEST-7 --clear-depends-on
+guild quest update QUEST-7 --replace-depends-on ""
+`),
 	Args: []command.ArgSpec{
 		{Name: "quest_id", Kind: command.ArgPositional, Type: command.ArgString, Required: true, Help: "QUEST-NNN"},
 		{Name: "subject", Kind: command.ArgFlag, Type: command.ArgString, Help: "new subject"},

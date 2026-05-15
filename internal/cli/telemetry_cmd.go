@@ -19,8 +19,9 @@ import (
 const optInHint = "telemetry is disabled — enable with [telemetry]\n  usage_log = true in ~/.guild/config.toml to start recording resp_bytes"
 
 var telemetryCmd = &cobra.Command{
-	Use:   "telemetry",
-	Short: "telemetry analytics (usage log, token estimates)",
+	Use:     "telemetry",
+	Short:   "telemetry analytics (usage log, token estimates)",
+	GroupID: "inspection",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},

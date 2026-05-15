@@ -140,6 +140,10 @@ func formatAccepted(s lineListSink, o AcceptOutput) string {
 }
 
 func formatAcceptError(s lineListSink, err error) (string, bool) {
+	if strings.Contains(err.Error(), "no active project set") {
+		msg := "quest_accept: no active project set; call guild_session_start before accepting a quest"
+		return strings.TrimRight(s.Line("❌", "[err]", msg), "\n"), true
+	}
 	var claimed *AlreadyClaimedError
 	if errors.As(err, &claimed) {
 		msg := fmt.Sprintf("already accepted: %s is held by %s (status=%s)",

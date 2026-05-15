@@ -19,8 +19,9 @@ import (
 // lets operators inspect the rule table, read per-rule stats, and
 // manually enable/disable/prune rules.
 var hintsCmd = &cobra.Command{
-	Use:   "hints",
-	Short: "hint engine inspection + administration",
+	Use:     "hints",
+	Short:   "hint engine inspection + administration",
+	GroupID: "inspection",
 	Long: `Inspect and administer the SQL-backed hint engine (QUEST-58).
 
 The engine fires advisory lines on top of tool responses. The launch-9

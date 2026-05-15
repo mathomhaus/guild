@@ -10,8 +10,9 @@ import (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "scaffold AGENTS.md and register this repo with guild",
+	Use:     "init",
+	Short:   "scaffold AGENTS.md and register this repo with guild",
+	GroupID: "core",
 	Long: `guild init — per-project scaffold
 
 Run inside a git repository. Detects the project name, shows a plan

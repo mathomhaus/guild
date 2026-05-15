@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -135,6 +136,22 @@ func TestAcceptCommand_SpecAlignsWithInput(t *testing.T) {
 		if !argNames[name] {
 			t.Errorf("input field %q has no matching ArgSpec", name)
 		}
+	}
+}
+
+func TestAcceptCommand_NoActiveProjectGuidesSessionStart(t *testing.T) {
+	msg, ok := quest.AcceptCommand.MCPErrorFormat(
+		command.MCPSink{},
+		errors.New("no active project set"),
+	)
+	if !ok {
+		t.Fatal("MCPErrorFormat did not handle no-active-project error")
+	}
+	if !strings.Contains(msg, "guild_session_start") {
+		t.Fatalf("message should guide caller to guild_session_start; got %q", msg)
+	}
+	if !strings.Contains(msg, "quest_accept") {
+		t.Fatalf("message should name quest_accept; got %q", msg)
 	}
 }
 

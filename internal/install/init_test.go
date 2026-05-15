@@ -507,7 +507,7 @@ func TestInit_MCPRegistration_SkipsDetectedClientWhenCLIMissing(t *testing.T) {
 	if len(calls) != 0 {
 		t.Fatalf("registration exec calls = %v, want none", calls)
 	}
-	if !strings.Contains(out.String(), "skipping Missing CLI: missing-client-cli not on PATH") {
+	if !strings.Contains(out.String(), "skipping Missing CLI: missing-client-cli binary not found on PATH") {
 		t.Fatalf("output missing missing-CLI skip notice:\n%s", out.String())
 	}
 }

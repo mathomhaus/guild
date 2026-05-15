@@ -9,8 +9,9 @@ import (
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "dashboard: last briefing, oath, top bounty, parallelism (alias of quest bounties)",
+	Use:     "status",
+	Short:   "dashboard: last briefing, oath, top bounty, and parallelism",
+	GroupID: "core",
 	Long: `Mid-session reorientation — shows the same snapshot the session-start
 briefing prints, on demand.
 

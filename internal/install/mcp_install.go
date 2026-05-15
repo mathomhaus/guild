@@ -6,7 +6,7 @@
 //
 // Default UX (no flags):
 //
-//	guild binary: /usr/local/bin/guild
+//	guild binary: /path/to/guild
 //
 //	Detected agent clients:
 //	  ✓ Claude Code
@@ -15,7 +15,7 @@
 //	Run the command for each agent you use:
 //
 //	  # Claude Code
-//	  claude mcp add guild --scope user -- /usr/local/bin/guild mcp serve
+//	  claude mcp add guild --scope user -- /path/to/guild mcp serve
 //
 // With --run: shells out to each detected client's CLI with a per-command
 // confirmation prompt.
@@ -264,7 +264,7 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 			// user knows which CLI to install (issue #48).
 			binaryName := instr.Argv[0]
 			if _, err := opts.lookPathFn(binaryName); err != nil {
-				fmt.Fprintf(opts.Out, "skipping %s: %s not on PATH\n", instr.Name, binaryName)
+				fmt.Fprintf(opts.Out, "skipping %s: %s binary not found on PATH\n", instr.Name, binaryName)
 				result.SkippedMissingCLI = append(result.SkippedMissingCLI, instr.Name)
 				continue
 			}

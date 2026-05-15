@@ -1,7 +1,7 @@
 // Package main is the entry point for the guild binary.
 //
 // guild bundles the lore CLI, quest CLI, and MCP stdio server in one
-// static binary. See https://github.com/mathomhaus/guild for docs.
+// single binary. See https://github.com/mathomhaus/guild for docs.
 package main
 
 import (

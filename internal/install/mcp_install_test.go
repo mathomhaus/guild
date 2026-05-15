@@ -545,7 +545,7 @@ func TestMCPInstall_Run_SkipsWhenCLIMissing(t *testing.T) {
 	if len(result.Ran) != 0 {
 		t.Errorf("Ran = %v, want empty", result.Ran)
 	}
-	if !strings.Contains(buf.String(), "skipping Bogus: "+badBinary+" not on PATH") {
+	if !strings.Contains(buf.String(), "skipping Bogus: "+badBinary+" binary not found on PATH") {
 		t.Errorf("expected missing-CLI notice; got:\n%s", buf.String())
 	}
 }

@@ -30,7 +30,7 @@ var CatalogCommand = &command.Command[CatalogInput, CatalogCmdOutput]{
 	Args: []command.ArgSpec{
 		{Name: "dir", Kind: command.ArgPositional, Type: command.ArgString, Required: true, Help: "directory to walk for .md files"},
 		{Name: "topic", Kind: command.ArgFlag, Type: command.ArgString, Help: "override per-file topic; default: file stem"},
-		{Name: "kind", Kind: command.ArgFlag, Type: command.ArgString, Help: "override kind"},
+		{Name: "kind", Kind: command.ArgFlag, Type: command.ArgString, Help: "override kind: idea|research|decision|observation|principle"},
 		{Name: "tags", Kind: command.ArgFlag, Type: command.ArgString, Help: "comma-separated tags"},
 		{Name: "project", Short: "p", Kind: command.ArgFlag, Type: command.ArgString, Help: "project override"},
 	},

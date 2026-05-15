@@ -24,6 +24,26 @@ func TestRootHelp(t *testing.T) {
 			t.Errorf("root --help output missing sub-command %q\n%s", want, out)
 		}
 	}
+	for _, want := range []string{
+		"Core",
+		"Inspection",
+		"knowledge lifecycle (inscribe/appraise/study/reforge)",
+		"dashboard: last briefing, oath, top bounty, and parallelism",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("root --help output missing grouped help text %q\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{
+		"three modes",
+		"static binary",
+		"read/write/decay/supersede",
+		"alias of quest bounties",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("root --help output still contains stale phrasing %q\n%s", unwanted, out)
+		}
+	}
 	// QUEST-10: the root help should nudge the user toward the
 	// natural next step after installing guild. Check for two
 	// action-phrases that should appear in the Long description.

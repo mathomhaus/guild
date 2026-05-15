@@ -39,7 +39,7 @@ func openLoreDB(ctx context.Context) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("cli: ensure ~/.guild: %w", err)
 	}
 	db, err := storage.Open(ctx, path)
@@ -479,7 +479,8 @@ func bindLoreRegistryVerb[I, O any](parent *cobra.Command, spec *command.Command
 // tolerates a nil Embed pointer per ADR-003 nil-safety.
 func buildCLILoreDeps() command.Deps {
 	d := command.Deps{
-		OpenDB: openLoreDB,
+		OpenDB:      openLoreDB,
+		OpenQuestDB: openQuestDB,
 		ResolveProj: func(ctx context.Context, argProject string) (string, error) {
 			db, err := openLoreDB(ctx)
 			if err != nil {

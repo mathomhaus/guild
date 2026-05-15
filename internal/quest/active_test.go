@@ -2,7 +2,10 @@ package quest
 
 import (
 	"context"
+	"database/sql"
 	"testing"
+
+	"github.com/mathomhaus/guild/internal/command"
 )
 
 func TestActive_None(t *testing.T) {
@@ -86,6 +89,50 @@ func TestActiveForProject_FiltersToProject(t *testing.T) {
 	}
 	if qs[0].ID != q2.ID || qs[0].Subject != "proj2 task" {
 		t.Fatalf("got %#v, want project2 quest %s", qs[0], q2.ID)
+	}
+}
+
+func TestActiveCommand_ProjectFlagFiltersToProject(t *testing.T) {
+	db, pid1 := newTestDB(t)
+	ctx := context.Background()
+
+	pid2 := "testproj2"
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO projects (id, path, tasks_file) VALUES (?, ?, ?)`,
+		pid2, t.TempDir(), "TASKS.md",
+	); err != nil {
+		t.Fatalf("register project2: %v", err)
+	}
+
+	q1 := mustPost(t, db, pid1, PostParams{Subject: "proj1 task"})
+	q2 := mustPost(t, db, pid2, PostParams{Subject: "proj2 task"})
+	if _, err := Accept(ctx, db, pid1, q1.ID, "agent-a"); err != nil {
+		t.Fatalf("accept1: %v", err)
+	}
+	if _, err := Accept(ctx, db, pid2, q2.ID, "agent-b"); err != nil {
+		t.Fatalf("accept2: %v", err)
+	}
+
+	out, err := ActiveCommand.Handler(ctx, fakeQuestDeps(db, pid2), ActiveInput{Project: pid2})
+	if err != nil {
+		t.Fatalf("ActiveCommand: %v", err)
+	}
+	if len(out.Quests) != 1 {
+		t.Fatalf("want 1 active in %s, got %d", pid2, len(out.Quests))
+	}
+	if out.Quests[0].ID != q2.ID {
+		t.Fatalf("got %s, want %s", out.Quests[0].ID, q2.ID)
+	}
+}
+
+func fakeQuestDeps(db *sql.DB, projectID string) command.Deps {
+	return command.Deps{
+		OpenDB: func(context.Context) (*sql.DB, error) {
+			return db, nil
+		},
+		ResolveProj: func(_ context.Context, _ string) (string, error) {
+			return projectID, nil
+		},
 	}
 }
 
