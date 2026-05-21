@@ -730,6 +730,10 @@ client's official CLI so you keep full control.
 Flags:
   --run           shell out to each detected client's CLI (prompts per command)
   --run --yes     shell out without prompting
+  --update        re-register clients whose configured path differs from the
+                  running binary (#61)
+  --force         re-register every detected client unconditionally; implies
+                  --update
   --print-config  print only the JSON snippet for manual paste (no detection)
   --skill         (not yet implemented) install Claude Code skill
 
@@ -737,9 +741,11 @@ Flags:
 
 | flag | type | default | description |
 | --- | --- | --- | --- |
+| `--force` | bool | `false` | re-register every detected client unconditionally (implies --update) |
 | `--print-config` | bool | `false` | print JSON snippet for manual paste (no detection output) |
 | `--run` | bool | `false` | shell out to each detected client's CLI (prompts per command) |
 | `--skill` | bool | `false` | install Claude Code skill (not yet implemented) |
+| `--update` | bool | `false` | re-register clients whose configured path differs from the running binary |
 | `--yes` | bool | `false` | skip per-command confirmation prompts (combine with --run) |
 
 ## `guild mcp serve`

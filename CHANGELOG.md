@@ -7,6 +7,10 @@ it reaches 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject invalid `lore catalog --kind` overrides before importing entries.
+
 ### Documentation
 
 - Document the `Stacked on: #N` PR body convention for non-main-based PRs (CONTRIBUTING.md, PR template).
