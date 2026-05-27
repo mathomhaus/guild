@@ -2,8 +2,10 @@ package lore
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -143,6 +145,38 @@ func TestCatalog_KindInference(t *testing.T) {
 	}
 	if researchCount != 1 {
 		t.Errorf("research count = %d; want 1", researchCount)
+	}
+}
+
+func TestCatalog_InvalidKindOverride(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "catalog-bad-kind")
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.md"), []byte("# Note\n\nSome content here."), 0o600); err != nil {
+		t.Fatalf("write note.md: %v", err)
+	}
+
+	_, err := Catalog(ctx, db, &CatalogParams{
+		Dir:       dir,
+		ProjectID: "catalog-bad-kind",
+		Kind:      Kind("not-a-real-kind"),
+	})
+	if !errors.Is(err, ErrInvalidKind) {
+		t.Fatalf("Catalog error = %v; want ErrInvalidKind", err)
+	}
+	if !strings.Contains(err.Error(), "valid: idea, research, decision, observation, principle") {
+		t.Fatalf("Catalog error = %q; want valid kind list", err.Error())
+	}
+
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entries WHERE project_id = 'catalog-bad-kind'`,
+	).Scan(&count); err != nil {
+		t.Fatalf("count entries: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("entries in DB = %d; want 0", count)
 	}
 }
 

@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/mathomhaus/guild/internal/guildpath"
 )
 
 // guildDir returns the path to ~/.guild/, using os.UserHomeDir() so that
@@ -52,10 +54,13 @@ func MissesLogPath() (string, error) {
 	return filepath.Join(dir, "misses.log"), nil
 }
 
-// ensureDir creates dir (and parents) with 0755 if it does not already exist.
+// ensureDir creates dir (and parents) with the canonical ~/.guild
+// mode (0o700) if it does not already exist. Routes through
+// guildpath so every entry point uses the same first-creator
+// semantics (#79).
 func ensureDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("telemetry: create dir %s: %w", dir, err)
+	if err := guildpath.EnsureDir(dir); err != nil {
+		return fmt.Errorf("telemetry: %w", err)
 	}
 	return nil
 }

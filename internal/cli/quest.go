@@ -13,6 +13,7 @@ import (
 
 	"github.com/mathomhaus/guild/internal/command"
 	"github.com/mathomhaus/guild/internal/config"
+	"github.com/mathomhaus/guild/internal/guildpath"
 	"github.com/mathomhaus/guild/internal/lore"
 	"github.com/mathomhaus/guild/internal/lore/embed"
 	"github.com/mathomhaus/guild/internal/project"
@@ -52,14 +53,18 @@ func openQuestDB(ctx context.Context) (*sql.DB, error) {
 	}
 	if path != ":memory:" && !strings.HasPrefix(path, ":memory:") {
 		if dir := filepath.Dir(path); dir != "." && dir != "/" {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return nil, fmt.Errorf("create %s: %w", dir, err)
+			if err := guildpath.EnsureDir(dir); err != nil {
+				return nil, fmt.Errorf("cli: %w", err)
 			}
 		}
 	}
 	db, err := storage.Open(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	if err := guildpath.TightenDBPerms(path); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("cli: %w", err)
 	}
 	if err := storage.Migrate(ctx, db, "quest"); err != nil {
 		_ = db.Close()
