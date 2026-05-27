@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mathomhaus/guild/internal/guildpath"
 	"github.com/mathomhaus/guild/internal/lore"
 	"github.com/mathomhaus/guild/internal/lore/embed"
 	"github.com/mathomhaus/guild/internal/quest"
@@ -220,6 +221,12 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 		return nil, fmt.Errorf("install: open lore.db: %w", err)
 	}
 	defer func() { _ = loreDB.Close() }()
+	// Tighten perms on the main db plus its WAL/SHM sidecars so
+	// pre-existing 0o644 installs (or installs that ran before the
+	// 0o700-on-create fix landed) get locked down too (#79).
+	if err := guildpath.TightenDBPerms(loreDBPath); err != nil {
+		return nil, fmt.Errorf("install: %w", err)
+	}
 	if err := storage.Migrate(ctx, loreDB, "lore"); err != nil {
 		return nil, fmt.Errorf("install: migrate lore.db: %w", err)
 	}
@@ -229,6 +236,9 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 		return nil, fmt.Errorf("install: open quest.db: %w", err)
 	}
 	defer func() { _ = questDB.Close() }()
+	if err := guildpath.TightenDBPerms(questDBPath); err != nil {
+		return nil, fmt.Errorf("install: %w", err)
+	}
 	if err := storage.Migrate(ctx, questDB, "quest"); err != nil {
 		return nil, fmt.Errorf("install: migrate quest.db: %w", err)
 	}
@@ -417,13 +427,9 @@ func resolveDBPaths(opts InitOptions) (loreDB, questDB string, err error) {
 	if loreDB != "" && questDB != "" {
 		return loreDB, questDB, nil
 	}
-	home, err := os.UserHomeDir()
+	guildDir, err := guildpath.EnsureGuildDir()
 	if err != nil {
-		return "", "", fmt.Errorf("install: resolve home dir: %w", err)
-	}
-	guildDir := filepath.Join(home, ".guild")
-	if err := os.MkdirAll(guildDir, 0o755); err != nil {
-		return "", "", fmt.Errorf("install: create ~/.guild: %w", err)
+		return "", "", fmt.Errorf("install: %w", err)
 	}
 	if loreDB == "" {
 		loreDB = filepath.Join(guildDir, "lore.db")

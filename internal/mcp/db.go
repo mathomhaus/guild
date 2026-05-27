@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mathomhaus/guild/internal/guildpath"
 	"github.com/mathomhaus/guild/internal/storage"
 )
 
@@ -62,14 +63,18 @@ func openQuestDB(ctx context.Context) (*sql.DB, error) {
 func openDB(ctx context.Context, path, description string) (*sql.DB, error) {
 	if path != ":memory:" && !strings.HasPrefix(path, ":memory:") {
 		if dir := filepath.Dir(path); dir != "." && dir != "/" {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return nil, fmt.Errorf("mcp: ensure %s: %w", dir, err)
+			if err := guildpath.EnsureDir(dir); err != nil {
+				return nil, fmt.Errorf("mcp: %w", err)
 			}
 		}
 	}
 	db, err := storage.Open(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	if err := guildpath.TightenDBPerms(path); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("mcp: %w", err)
 	}
 	if err := storage.Migrate(ctx, db, description); err != nil {
 		_ = db.Close()
