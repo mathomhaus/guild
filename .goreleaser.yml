@@ -166,6 +166,7 @@ release:
   # tarball before extracting.
   extra_files:
     - glob: install.sh
+    - glob: install.ps1
 
 # ─── Homebrew cask ─────────────────────────────────────────────────────────────
 #
