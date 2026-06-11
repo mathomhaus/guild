@@ -109,10 +109,19 @@ try {
 
     New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
     $installPath = Join-Path $Prefix "$BinName.exe"
-    # Copy to a temp name, then rename into place; a plain overwrite
-    # would fail if guild.exe is currently running.
+    # Windows locks running executables against overwrite/delete but
+    # allows rename. If guild.exe is running (e.g. as an MCP server),
+    # rename it aside, move the new binary in, then best-effort delete
+    # the old one (next install cleans it up if it is still locked).
+    Get-ChildItem -Path $Prefix -Filter "$BinName.exe.old-*" -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
     Copy-Item $binSrc "$installPath.tmp" -Force
-    Move-Item "$installPath.tmp" $installPath -Force
+    $oldPath = "$installPath.old-" + [System.IO.Path]::GetRandomFileName()
+    if (Test-Path $installPath) {
+        Move-Item $installPath $oldPath
+    }
+    Move-Item "$installPath.tmp" $installPath
+    Remove-Item $oldPath -Force -ErrorAction SilentlyContinue
 
     # --- post-install ------------------------------------------------
     Write-Host ''

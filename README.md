@@ -63,6 +63,12 @@ irm https://github.com/mathomhaus/guild/releases/latest/download/install.ps1 | i
 guild --version   # in a new terminal
 ```
 
+Or from cmd.exe:
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://github.com/mathomhaus/guild/releases/latest/download/install.ps1 | iex"
+```
+
 The installer SHA256-verifies the zip, installs to
 `%LOCALAPPDATA%\Programs\guild`, and adds it to your user PATH.
 On Windows, semantic (vector) retrieval is currently disabled —
