@@ -71,7 +71,7 @@ var EmbedRebuildCommand = &command.Command[EmbedRebuildInput, EmbedRebuildOutput
 			return EmbedRebuildOutput{
 				ProjectID: pid,
 				Disabled:  true,
-				Reason:    "embedder runtime is not wired into this surface (QUEST-212 pending); embed-rebuild cannot encode and will not wipe existing vectors",
+				Reason:    "embedder runtime is not wired into this surface; embed-rebuild cannot encode and will not wipe existing vectors",
 			}, nil
 		}
 
