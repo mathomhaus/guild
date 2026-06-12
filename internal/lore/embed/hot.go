@@ -345,8 +345,9 @@ func WriteVector(ctx context.Context, db *sql.DB, deps HotDeps, entryID int64, s
 	// same lock window so the cached epoch never lags the splice.
 	if deps.Index != nil {
 		if err := deps.Index.Splice(entryID, qvec, epoch); err != nil {
-			// A Splice failure is non-fatal: other readers will pick
-			// up the row via CheckAndReload. Log and continue.
+			// Splice only fails on a malformed vector (out-of-order
+			// epochs are resolved internally per slot). The DB row is
+			// canonical either way. Log and continue.
 			logger.Warn("embed/hot: index splice failed after commit",
 				"entry_id", entryID,
 				"err", err,
