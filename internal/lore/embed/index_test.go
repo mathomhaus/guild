@@ -316,6 +316,47 @@ func TestIndex_CheckAndReload_ReloadsOnEpochBump(t *testing.T) {
 	}
 }
 
+// TestIndex_LoadFromDB_DiscardsSnapshotOlderThanSplice: a load whose
+// DB snapshot predates a concurrent Splice must not clobber the newer
+// in-memory state. Deterministic reconstruction of the interleaving
+// behind the Test_ConcurrentInscribeAndAppraise lost-Splice flake: the
+// reader's SELECT ran before the writer's commit, the writer's Splice
+// landed first, then the reader's stale snapshot tried to install.
+func TestIndex_LoadFromDB_DiscardsSnapshotOlderThanSplice(t *testing.T) {
+	ctx := context.Background()
+	db := openEmbedTestDB(t)
+	mustSeedEntry(t, db, 1, "e1")
+	mustInsertVec(t, db, 1, canonModelID, Quantize(deterministicUnitVec(1)))
+	mustSetEpoch(t, db, 1)
+
+	idx := NewIndex(LoreCorpus{}, canonModelID)
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+
+	// Writer path: Splice entry 2 at epoch 2. The DB row + epoch bump
+	// are deliberately NOT written, so the DB still holds the epoch-1
+	// single-row state, i.e. the stale snapshot a slow reader observes
+	// when its reads ran before the writer's commit.
+	if err := idx.Splice(2, Quantize(deterministicUnitVec(2)), 2); err != nil {
+		t.Fatalf("Splice: %v", err)
+	}
+	if idx.Len() != 2 {
+		t.Fatalf("post-splice Len = %d, want 2", idx.Len())
+	}
+
+	// The late reader's load must be discarded, not installed.
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatalf("LoadFromDB (stale): %v", err)
+	}
+	if idx.Len() != 2 {
+		t.Fatalf("stale snapshot clobbered the index: Len = %d, want 2", idx.Len())
+	}
+	if idx.Epoch() != 2 {
+		t.Fatalf("stale snapshot regressed epoch: %d, want 2", idx.Epoch())
+	}
+}
+
 // TestIndex_Splice_InsertNew: Splice on an unknown entry_id appends a
 // new slot and bumps cachedEpoch.
 func TestIndex_Splice_InsertNew(t *testing.T) {

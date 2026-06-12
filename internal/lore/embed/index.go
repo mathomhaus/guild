@@ -231,6 +231,17 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		}
 	}
 
+	// Read the epoch BEFORE scanning rows so it is a lower bound for
+	// the snapshot: every commit visible to the SELECT below happened
+	// at or after this epoch. Reading it after the scan inverts that
+	// bound and lets a concurrent writer's commit land between the two
+	// reads, stamping a pre-commit row snapshot with a post-commit
+	// epoch; CheckAndReload then trusts the stale snapshot forever.
+	epoch, err := readEpoch(ctx, db, i.corpus.MetaKey(FieldVectorEpoch))
+	if err != nil {
+		return 0, err
+	}
+
 	// Stream the corpus's vector table in one SELECT. entry_id is the
 	// PK so the default ordering is by id; that is fine for parallel-
 	// slice layout and gives tests a deterministic load order.
@@ -290,14 +301,22 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, fmt.Errorf("embed/index: iterate %s: %w", i.corpus.VectorTable(), err)
 	}
 
-	// Refresh epoch from meta using the corpus's meta key. A missing
-	// row (fresh DB) yields 0.
-	epoch, err := readEpoch(ctx, db, i.corpus.MetaKey(FieldVectorEpoch))
-	if err != nil {
-		return 0, err
-	}
-
 	i.bindMu.Lock()
+	if i.loaded && epoch < i.cachedEpoch {
+		// A concurrent Splice advanced the index past this snapshot
+		// (its writer committed after our epoch read). Installing the
+		// snapshot would silently drop that newer vector. Discard;
+		// the in-memory state is already at least as fresh as the DB
+		// state this load observed.
+		cached := i.cachedEpoch
+		i.bindMu.Unlock()
+		i.logger.Debug("embed/index: discarded stale load snapshot",
+			"snapshot_epoch", epoch,
+			"cached_epoch", cached,
+			"rows", len(newVecs),
+		)
+		return len(newVecs), nil
+	}
 	i.vectors = newVecs
 	i.entries = newEntries
 	i.byEntry = newByID
