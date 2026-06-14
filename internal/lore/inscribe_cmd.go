@@ -13,6 +13,7 @@ type InscribeInput struct {
 	Title         string   `json:"title" jsonschema:"short distinctive title (search-friendly)"`
 	Kind          string   `json:"kind" jsonschema:"one of: idea|research|decision|observation|principle"`
 	Summary       string   `json:"summary" jsonschema:"2-3 sentence distillation"`
+	Body          string   `json:"body,omitempty" jsonschema:"full verbatim source material (investigation notes, original doc, transcript). summary is the search key; body is what lore_study returns for the deep read"`
 	Topic         string   `json:"topic" jsonschema:"topic slug (e.g. 'auth', 'caching')"`
 	Tags          []string `json:"tags,omitempty" jsonschema:"semantic tags"`
 	Informs       []string `json:"informs,omitempty" jsonschema:"source entry IDs (LORE-N, ENTRY-N, or bare N) that inform this entry — creates informs provenance edges at write-time"`
@@ -38,6 +39,7 @@ var InscribeCommand = &command.Command[InscribeInput, InscribeCmdOutput]{
 		{Name: "title", Kind: command.ArgPositional, Type: command.ArgString, Required: true, Variadic: true, Help: "short distinctive title"},
 		{Name: "kind", Short: "k", Kind: command.ArgFlag, Type: command.ArgString, Required: true, Help: "entry kind (required): idea|research|decision|observation|principle"},
 		{Name: "summary", Short: "s", Kind: command.ArgFlag, Type: command.ArgString, Required: true, Help: "2-3 sentence summary (required)"},
+		{Name: "body", Kind: command.ArgFlag, Type: command.ArgString, Help: "full verbatim source material (e.g. --body \"$(cat notes.md)\"); summary stays the search key"},
 		{Name: "topic", Short: "t", Kind: command.ArgFlag, Type: command.ArgString, Required: true, Help: "topic slug (required)"},
 		{Name: "tags", Kind: command.ArgFlag, Type: command.ArgStringSlice, Repeatable: true, Help: "semantic tag (repeatable)"},
 		{Name: "informs", Kind: command.ArgFlag, Type: command.ArgStringSlice, Repeatable: true, Help: "source entry id (LORE-N, ENTRY-N, or bare N) that informs this entry — repeatable, creates provenance edges"},
@@ -73,6 +75,7 @@ var InscribeCommand = &command.Command[InscribeInput, InscribeCmdOutput]{
 			Kind:          Kind(in.Kind),
 			Title:         in.Title,
 			Summary:       in.Summary,
+			Body:          in.Body,
 			Topic:         in.Topic,
 			Tags:          in.Tags,
 			Informs:       informs,

@@ -1,0 +1,27 @@
+-- 009_lore_body.up.sql
+--
+-- Verbatim body storage for lore entries.
+--
+-- Before this migration `entries` carried a `summary` only — the 2-3
+-- sentence distillation written at inscribe time. Full source material
+-- (an investigation log, the original doc, a pasted transcript) had
+-- nowhere to live except `file_path`, a pointer that breaks the moment
+-- the file moves or the agent runs somewhere without that filesystem.
+--
+-- `body` is the inline payload: the full content an agent retrieves with
+-- `lore study` after `summary` matched the search. summary stays the
+-- search key; body is what you read once you've found the entry.
+--
+-- NOT indexed into entries_fts. Adding body to the FTS index changes BM25
+-- ranking over the whole corpus (longer bodies shift term frequencies),
+-- which this project gates on retrieval-quality evals — see migration 004's
+-- Recall@5 measurement. That belongs in its own eval-backed change, not
+-- bundled with the storage primitive. This migration only adds the column.
+--
+-- NOT NULL DEFAULT '' so the ALTER backfills every existing row with the
+-- empty string — pre-009 entries simply have no body, and the read path
+-- treats "" as "no body" (printed only when non-empty).
+--
+-- Idempotency: schema_migrations prevents re-execution.
+
+ALTER TABLE entries ADD COLUMN body TEXT NOT NULL DEFAULT '';

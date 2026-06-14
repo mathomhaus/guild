@@ -317,3 +317,45 @@ func TestArchiveRestoreRoundTrip(t *testing.T) {
 		t.Errorf("restored title = %q; want 'Go error handling'", title)
 	}
 }
+
+// TestArchiveRestoreRoundTrip_PreservesBody guards the backup path: the
+// verbatim body must survive archive → restore. Without body in the
+// snapshot projection or the restore INSERT, a round-trip would silently
+// drop the full source material and leave only the summary.
+func TestArchiveRestoreRoundTrip_PreservesBody(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "rtbody-src", "rtbody-dst")
+
+	const fullBody = "line one of the verbatim body\nline two with detail\nline three"
+
+	res, err := Inscribe(ctx, db, &InscribeParams{
+		ProjectID: "rtbody-src",
+		Kind:      KindObservation,
+		Title:     "entry carrying a verbatim body",
+		Summary:   "short distillation for the search snippet.",
+		Body:      fullBody,
+		Topic:     "test",
+	})
+	if err != nil {
+		t.Fatalf("inscribe src entry: %v", err)
+	}
+	_ = res
+
+	snapshotPath := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := Archive(ctx, db, "rtbody-src", snapshotPath); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if _, err := Restore(ctx, db, "rtbody-dst", snapshotPath); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	var body string
+	if err := db.QueryRowContext(ctx,
+		`SELECT body FROM entries WHERE project_id = 'rtbody-dst'`,
+	).Scan(&body); err != nil {
+		t.Fatalf("read restored body: %v", err)
+	}
+	if body != fullBody {
+		t.Errorf("restored body = %q; want %q", body, fullBody)
+	}
+}

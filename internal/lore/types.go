@@ -62,6 +62,7 @@ type Entry struct {
 	Kind           Kind
 	Title          string
 	Summary        string
+	Body           string   // full verbatim source material; "" when none (the inscribe-time default)
 	Tags           []string // parsed from comma-separated DB column; empty slice if NULL
 	FilePath       string   // "" if NULL
 	Source         string   // "" if NULL

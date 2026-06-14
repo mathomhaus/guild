@@ -19,6 +19,7 @@ type InscribeParams struct {
 	Kind          Kind      // one of KindIdea..KindPrinciple; required
 	Title         string    // required
 	Summary       string    // required
+	Body          string    // optional full verbatim source material; stored as-is, returned by lore study
 	Topic         string    // required
 	Tags          []string  // optional semantic tags
 	Informs       []int64   // optional source entry IDs — creates informs edges after insert
@@ -201,14 +202,15 @@ func Inscribe(ctx context.Context, db *sql.DB, p *InscribeParams) (*InscribeResu
 	// Prepared INSERT — fixed SQL, bound values.
 	res, err := db.ExecContext(ctx,
 		`INSERT INTO entries
-		   (project_id, topic, kind, title, summary, tags, file_path, source,
+		   (project_id, topic, kind, title, summary, body, tags, file_path, source,
 		    status, valid_days, needs_review, prompted_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ProjectID,
 		p.Topic,
 		string(p.Kind),
 		p.Title,
 		p.Summary,
+		p.Body, // NOT NULL DEFAULT '' — store as-is; "" is the no-body sentinel
 		nullIfEmpty(tags),
 		nullIfEmpty(p.FilePath),
 		nullIfEmpty(p.Source),
@@ -242,6 +244,7 @@ func Inscribe(ctx context.Context, db *sql.DB, p *InscribeParams) (*InscribeResu
 		Kind:        p.Kind,
 		Title:       p.Title,
 		Summary:     p.Summary,
+		Body:        p.Body,
 		Tags:        append([]string(nil), p.Tags...),
 		FilePath:    p.FilePath,
 		Source:      p.Source,

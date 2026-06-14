@@ -391,6 +391,10 @@ _no arguments_
 {
   "additionalProperties": false,
   "properties": {
+    "body": {
+      "description": "full verbatim source material (investigation notes, original doc, transcript). summary is the search key; body is what lore_study returns for the deep read",
+      "type": "string"
+    },
     "informs": {
       "description": "source entry IDs (LORE-N, ENTRY-N, or bare N) that inform this entry — creates informs provenance edges at write-time",
       "items": {
