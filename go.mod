@@ -5,14 +5,14 @@ go 1.25.8
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/google/jsonschema-go v0.4.3
-	github.com/mattn/go-isatty v0.0.22
-	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/mattn/go-isatty v0.0.24
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/shota3506/onnxruntime-purego v0.0.0-20260315223538-8db8bd7424b2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	golang.org/x/mod v0.37.0
-	golang.org/x/tools v0.45.0
-	modernc.org/sqlite v1.52.0
+	golang.org/x/mod v0.38.0
+	golang.org/x/tools v0.47.0
+	modernc.org/sqlite v1.55.0
 )
 
 require (
@@ -26,9 +26,10 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
+	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
