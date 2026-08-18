@@ -7,6 +7,13 @@ it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- `lore inscribe --body` (and the `body` field on `lore_inscribe` over MCP)
+  stores full verbatim source material alongside the summary. `summary`
+  stays the search key; `lore study` returns the `body` for the deep read.
+  Bodies survive `archive`/`restore` round-trips.
+
 ### Fixed
 
 - Reject invalid `lore catalog --kind` overrides before importing entries.

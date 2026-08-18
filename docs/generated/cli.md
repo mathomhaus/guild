@@ -420,6 +420,7 @@ Store knowledge that transcends the current task — patterns, decisions, resear
 
 | flag | type | default | description |
 | --- | --- | --- | --- |
+| `--body` | string | `—` | full verbatim source material (e.g. --body "$(cat notes.md)"); summary stays the search key |
 | `--informs` | stringArray | `[]` | source entry id (LORE-N, ENTRY-N, or bare N) that informs this entry — repeatable, creates provenance edges |
 | `--json` | bool | `false` | emit structured JSON result instead of formatted text |
 | `--kind`, `-k` | string | `—` | entry kind (required): idea\|research\|decision\|observation\|principle |

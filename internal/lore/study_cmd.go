@@ -72,6 +72,9 @@ func formatStudyResult(s lineSink, o StudyCmdOutput) string {
 	fmt.Fprintf(&b, "  title: %s\n", e.Title)
 	fmt.Fprintf(&b, "  topic: %s\n", e.Topic)
 	fmt.Fprintf(&b, "  summary: %s\n", e.Summary)
+	if e.Body != "" {
+		fmt.Fprintf(&b, "  body: %s\n", e.Body)
+	}
 	if len(e.Tags) > 0 {
 		fmt.Fprintf(&b, "  tags: %s\n", strings.Join(e.Tags, ","))
 	}

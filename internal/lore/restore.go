@@ -143,14 +143,15 @@ func restoreV1(ctx context.Context, db *sql.DB, projectID string, data []byte) (
 
 		res, err := db.ExecContext(ctx,
 			`INSERT INTO entries
-			   (project_id, topic, kind, title, summary, tags, file_path, source,
+			   (project_id, topic, kind, title, summary, body, tags, file_path, source,
 			    status, valid_days, needs_review, prompted_by, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			projectID,
 			e.Topic,
 			e.Kind,
 			e.Title,
 			e.Summary,
+			e.Body, // NOT NULL DEFAULT '' — empty when restoring a pre-009 snapshot
 			nullIfEmpty(tags),
 			nullIfEmpty(filePath),
 			nullIfEmpty(source),

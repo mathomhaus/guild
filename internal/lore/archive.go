@@ -26,6 +26,7 @@ type snapshotLoreEntry struct {
 	Kind        string `json:"kind"`
 	Title       string `json:"title"`
 	Summary     string `json:"summary"`
+	Body        string `json:"body,omitempty"`
 	Tags        string `json:"tags,omitempty"`
 	FilePath    string `json:"file_path,omitempty"`
 	Source      string `json:"source,omitempty"`
@@ -103,7 +104,7 @@ func Archive(ctx context.Context, db *sql.DB, projectID, snapshotPath string) er
 
 	// Fetch all entries for this project.
 	entryRows, err := db.QueryContext(ctx,
-		`SELECT id, project_id, topic, kind, title, summary,
+		`SELECT id, project_id, topic, kind, title, summary, body,
 		        COALESCE(tags,''), COALESCE(file_path,''), COALESCE(source,''),
 		        status, valid_days, needs_review,
 		        COALESCE(prompted_by,''), created_at, updated_at, access_count
@@ -122,7 +123,7 @@ func Archive(ctx context.Context, db *sql.DB, projectID, snapshotPath string) er
 		var e snapshotLoreEntry
 		var validDays sql.NullInt64
 		if err := entryRows.Scan(
-			&e.ID, &e.ProjectID, &e.Topic, &e.Kind, &e.Title, &e.Summary,
+			&e.ID, &e.ProjectID, &e.Topic, &e.Kind, &e.Title, &e.Summary, &e.Body,
 			&e.Tags, &e.FilePath, &e.Source,
 			&e.Status, &validDays, &e.NeedsReview,
 			&e.PromptedBy, &e.CreatedAt, &e.UpdatedAt, &e.AccessCount,

@@ -333,6 +333,16 @@ func renderStudy(w io.Writer, r *lore.StudyResult, cfg *config.Config) {
 	fmt.Fprintln(w, "  "+strings.Repeat("-", 40))
 	fmt.Fprintf(w, "  %s\n\n", r.Entry.Summary)
 
+	// BODY is the full verbatim source material. Printed only when present
+	// so pre-009 entries (and body-less inscribes) keep the lean layout.
+	// Not indented per-line: bodies are often multi-line code/notes where
+	// reflowing would corrupt the content.
+	if r.Entry.Body != "" {
+		fmt.Fprintln(w, "  BODY")
+		fmt.Fprintln(w, "  "+strings.Repeat("-", 40))
+		fmt.Fprintf(w, "%s\n\n", r.Entry.Body)
+	}
+
 	if len(r.Linked) > 0 {
 		fmt.Fprintln(w, "  LINKED ENTRIES")
 		fmt.Fprintln(w, "  "+strings.Repeat("-", 40))
