@@ -279,3 +279,71 @@ func TestUpdate_ClearAcceptance(t *testing.T) {
 		t.Errorf("acceptance = %v, want empty", got.Acceptance)
 	}
 }
+
+// TestUpdate_ClearDependsOn_BeforeTwoAfterZero is the explicit acceptance-criterion
+// shape for issue #47: a quest with two deps, --clear-depends-on drops both.
+func TestUpdate_ClearDependsOn_BeforeTwoAfterZero(t *testing.T) {
+	db, pid := newTestDB(t)
+	ctx := context.Background()
+	a := mustPost(t, db, pid, PostParams{Subject: "A"})
+	c := mustPost(t, db, pid, PostParams{Subject: "C"})
+	b := mustPost(t, db, pid, PostParams{Subject: "B", DependsOn: []string{a.ID, c.ID}})
+
+	before := mustLoad(t, db, pid, b.ID)
+	if len(before.DependsOn) != 2 {
+		t.Fatalf("B before clear: deps = %v, want 2", before.DependsOn)
+	}
+
+	if _, err := Update(ctx, db, pid, b.ID, UpdateParams{ClearDependsOn: true}); err != nil {
+		t.Fatalf("Update ClearDependsOn: %v", err)
+	}
+
+	after := mustLoad(t, db, pid, b.ID)
+	if len(after.DependsOn) != 0 {
+		t.Errorf("B after clear: deps = %v, want empty", after.DependsOn)
+	}
+}
+
+// TestUpdate_EmptyDependsOn_RedirectsToClear covers issue #47 acceptance criterion #3:
+// `--depends-on ""` (empty/whitespace-only entries) without --clear-depends-on or
+// --replace-depends-on must error pointing at --clear-depends-on rather than
+// silently no-op'ing.
+func TestUpdate_EmptyDependsOn_RedirectsToClear(t *testing.T) {
+	db, pid := newTestDB(t)
+	ctx := context.Background()
+	a := mustPost(t, db, pid, PostParams{Subject: "A"})
+	b := mustPost(t, db, pid, PostParams{Subject: "B", DependsOn: []string{a.ID}})
+
+	cases := []struct {
+		name string
+		deps []string
+	}{
+		{"single empty", []string{""}},
+		{"single whitespace", []string{"   "}},
+		{"multiple empty", []string{"", "  ", "\t"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Update(ctx, db, pid, b.ID, UpdateParams{DependsOn: tc.deps})
+			if !errors.Is(err, ErrEmptyDependsOn) {
+				t.Fatalf("Update with deps=%v: err = %v, want ErrEmptyDependsOn", tc.deps, err)
+			}
+			// State must be untouched on error. Use Load(ctx, ...) directly so
+			// contextcheck sees the parent ctx flow into the subtest closure
+			// (the mustLoad helper synthesizes a fresh context.Background()).
+			reloaded, err := Load(ctx, db, pid, b.ID)
+			if err != nil {
+				t.Fatalf("Load %s: %v", b.ID, err)
+			}
+			if len(reloaded.DependsOn) != 1 || reloaded.DependsOn[0] != a.ID {
+				t.Errorf("B deps after refused empty update = %v, want [%s]", reloaded.DependsOn, a.ID)
+			}
+		})
+	}
+
+	// Sanity: a mixed slice (real ID + empty) is NOT redirected — the trim/skip
+	// path still applies for that case so existing callers aren't broken.
+	if _, err := Update(ctx, db, pid, b.ID, UpdateParams{DependsOn: []string{a.ID, ""}}); err != nil {
+		t.Fatalf("Update with mixed deps: unexpected error %v", err)
+	}
+}

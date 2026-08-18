@@ -70,6 +70,27 @@ func Update(ctx context.Context, db *sql.DB, projectID, taskID string, params Up
 		return nil, fmt.Errorf("%w: %s", ErrConflictingUpdate, conflicts[0])
 	}
 
+	// Issue #47: callers (especially agents) sometimes pass `--depends-on ""`
+	// or `depends_on=[""]` expecting it to mean "drop all dependencies". The
+	// downstream loop trims/skips empty strings and the call silently no-ops,
+	// which is indistinguishable from "no change". Detect that shape and
+	// redirect to --clear-depends-on rather than failing silently. The check
+	// only fires when ClearDependsOn / ReplaceDependsOn are NOT also set, so
+	// a normal `--depends-on QUEST-1 --depends-on ""` call (an empty entry
+	// mixed with real ones) keeps the trim-and-skip behavior.
+	if len(params.DependsOn) > 0 && len(params.ReplaceDependsOn) == 0 && !params.ClearDependsOn {
+		allEmpty := true
+		for _, d := range params.DependsOn {
+			if strings.TrimSpace(d) != "" {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			return nil, ErrEmptyDependsOn
+		}
+	}
+
 	agent := agentOrDefault(params.Agent)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
