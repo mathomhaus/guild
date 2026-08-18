@@ -1,4 +1,9 @@
 version: 2
+
+# commit-message.prefix already carries the conventional-commit scope.
+# Do not add `include: scope` alongside it. Dependabot appends its own
+# "(deps)" on top, yielding "chore(deps)(deps): ..." which the PR-hygiene
+# title lint rejects as an unknown scope.
 updates:
   - package-ecosystem: gomod
     directory: /
@@ -12,7 +17,6 @@ updates:
           - "*"
     commit-message:
       prefix: "chore(deps)"
-      include: scope
     labels:
       - dependencies
       - go
@@ -29,7 +33,6 @@ updates:
           - "*"
     commit-message:
       prefix: "chore(ci)"
-      include: scope
     labels:
       - dependencies
       - github-actions
