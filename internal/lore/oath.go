@@ -11,6 +11,10 @@ import (
 // project, sorted created_at DESC (newest first — the common reading
 // order for the session-start oath wall). The reverse-chrono order
 // surfaces the most recently added principles at the top of the feed.
+//
+// `e.id DESC` is the stable tie-breaker for entries written within the
+// same SQLite-second; without it back-to-back inscribes can reorder
+// non-deterministically across reads.
 func Oath(ctx context.Context, db *sql.DB, project string) ([]*Entry, error) {
 	if db == nil {
 		return nil, fmt.Errorf("lore: oath: nil db")
@@ -23,7 +27,7 @@ func Oath(ctx context.Context, db *sql.DB, project string) ([]*Entry, error) {
 	sqlText := `SELECT ` + entryColumns + `
 		FROM entries e
 		WHERE e.project_id = ? AND e.kind = 'principle' AND e.status = 'current'
-		ORDER BY e.created_at DESC`
+		ORDER BY e.created_at DESC, e.id DESC`
 	rows, err := db.QueryContext(ctx, sqlText, project) //sqlcheck:ignore // sqlText is a constant template; entryColumns is a constant
 	if err != nil {
 		return nil, fmt.Errorf("lore: oath: query: %w", err)

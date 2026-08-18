@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mathomhaus/guild/internal/guildpath"
 	"github.com/mathomhaus/guild/internal/hints"
 	"github.com/mathomhaus/guild/internal/storage"
 )
@@ -81,11 +82,15 @@ func openHintsDB(ctx context.Context) (*sql.DB, error) {
 	}
 	path := filepath.Join(home, ".guild", "quest.db")
 	if dir := filepath.Dir(path); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
+		_ = guildpath.EnsureDir(dir)
 	}
 	db, err := storage.Open(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	if err := guildpath.TightenDBPerms(path); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("cli: %w", err)
 	}
 	if err := storage.Migrate(ctx, db, "quest"); err != nil {
 		_ = db.Close()

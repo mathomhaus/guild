@@ -316,6 +316,47 @@ func TestIndex_CheckAndReload_ReloadsOnEpochBump(t *testing.T) {
 	}
 }
 
+// TestIndex_LoadFromDB_DiscardsSnapshotOlderThanSplice: a load whose
+// DB snapshot predates a concurrent Splice must not clobber the newer
+// in-memory state. Deterministic reconstruction of the interleaving
+// behind the Test_ConcurrentInscribeAndAppraise lost-Splice flake: the
+// reader's SELECT ran before the writer's commit, the writer's Splice
+// landed first, then the reader's stale snapshot tried to install.
+func TestIndex_LoadFromDB_DiscardsSnapshotOlderThanSplice(t *testing.T) {
+	ctx := context.Background()
+	db := openEmbedTestDB(t)
+	mustSeedEntry(t, db, 1, "e1")
+	mustInsertVec(t, db, 1, canonModelID, Quantize(deterministicUnitVec(1)))
+	mustSetEpoch(t, db, 1)
+
+	idx := NewIndex(LoreCorpus{}, canonModelID)
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+
+	// Writer path: Splice entry 2 at epoch 2. The DB row + epoch bump
+	// are deliberately NOT written, so the DB still holds the epoch-1
+	// single-row state, i.e. the stale snapshot a slow reader observes
+	// when its reads ran before the writer's commit.
+	if err := idx.Splice(2, Quantize(deterministicUnitVec(2)), 2); err != nil {
+		t.Fatalf("Splice: %v", err)
+	}
+	if idx.Len() != 2 {
+		t.Fatalf("post-splice Len = %d, want 2", idx.Len())
+	}
+
+	// The late reader's load must be discarded, not installed.
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatalf("LoadFromDB (stale): %v", err)
+	}
+	if idx.Len() != 2 {
+		t.Fatalf("stale snapshot clobbered the index: Len = %d, want 2", idx.Len())
+	}
+	if idx.Epoch() != 2 {
+		t.Fatalf("stale snapshot regressed epoch: %d, want 2", idx.Epoch())
+	}
+}
+
 // TestIndex_Splice_InsertNew: Splice on an unknown entry_id appends a
 // new slot and bumps cachedEpoch.
 func TestIndex_Splice_InsertNew(t *testing.T) {
@@ -395,22 +436,60 @@ func TestIndex_Splice_WrongLength(t *testing.T) {
 	}
 }
 
-// TestIndex_Splice_EpochRegress: passing a newEpoch smaller than the
-// cached epoch is a caller bug (likely passed the pre-increment
-// value) and returns an error.
-func TestIndex_Splice_EpochRegress(t *testing.T) {
+// TestIndex_Splice_OutOfOrderCrossEntry: concurrent writers splice out
+// of commit order. A late splice for a NEW entry at a lower epoch must
+// land; refusing it drops the vector permanently because CheckAndReload
+// sees the higher cached epoch and never reloads. Deterministic
+// reconstruction of the second lost-Splice interleaving (writer
+// committed at epoch 19, spliced after the epoch-20 writer).
+func TestIndex_Splice_OutOfOrderCrossEntry(t *testing.T) {
 	ctx := context.Background()
 	db := openEmbedTestDB(t)
 	idx := NewIndex(LoreCorpus{}, canonModelID)
 	if _, err := idx.LoadFromDB(ctx, db); err != nil {
 		t.Fatalf("LoadFromDB: %v", err)
 	}
-	v := Quantize(deterministicUnitVec(1))
-	if err := idx.Splice(1, v, 5); err != nil {
-		t.Fatalf("Splice: %v", err)
+	if err := idx.Splice(20, Quantize(deterministicUnitVec(20)), 20); err != nil {
+		t.Fatalf("Splice e20@20: %v", err)
 	}
-	if err := idx.Splice(1, v, 4); err == nil {
-		t.Fatal("Splice epoch regress: want error, got nil")
+	if err := idx.Splice(19, Quantize(deterministicUnitVec(19)), 19); err != nil {
+		t.Fatalf("Splice e19@19 (late, lower epoch): %v", err)
+	}
+	if idx.Len() != 2 {
+		t.Fatalf("Len = %d, want 2 (late cross-entry splice was dropped)", idx.Len())
+	}
+	if idx.Epoch() != 20 {
+		t.Fatalf("cachedEpoch = %d, want 20 (must not regress)", idx.Epoch())
+	}
+}
+
+// TestIndex_Splice_OutOfOrderSameEntry: an older splice for an entry
+// that already carries a newer-epoch vector is skipped silently; the
+// DB row it represents is already superseded.
+func TestIndex_Splice_OutOfOrderSameEntry(t *testing.T) {
+	ctx := context.Background()
+	db := openEmbedTestDB(t)
+	idx := NewIndex(LoreCorpus{}, canonModelID)
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+	vNew := Quantize(deterministicUnitVec(2))
+	vOld := Quantize(deterministicUnitVec(1))
+	if err := idx.Splice(7, vNew, 5); err != nil {
+		t.Fatalf("Splice @5: %v", err)
+	}
+	if err := idx.Splice(7, vOld, 4); err != nil {
+		t.Fatalf("Splice @4 (stale): %v", err)
+	}
+	if idx.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", idx.Len())
+	}
+	hits, err := idx.TopK(vNew, 1)
+	if err != nil {
+		t.Fatalf("TopK: %v", err)
+	}
+	if want := cosineInt8(vNew, vNew); hits[0].Score != want {
+		t.Fatalf("score %d, want %d (stale splice overwrote newer vector)", hits[0].Score, want)
 	}
 }
 

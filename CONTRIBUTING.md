@@ -101,6 +101,24 @@ right kind for each inscribe). Follow it.
 - Update `CHANGELOG.md` under `## [Unreleased]` if your change is
   user-visible.
 
+### Stacked PRs
+
+If you open a PR against a branch other than `main` (because it
+depends on an in-flight PR), put a `Stacked on: #N` line near the top
+of the PR body so reviewers can see the dependency without reading the
+base ref. Example:
+
+```
+## Summary
+
+Adds the `--shallow` flag to `guild lore appraise`.
+
+Stacked on: #61
+```
+
+The convention is human-only for now -- there is no enforcing bot or
+action.
+
 ## Adding dependencies
 
 Don't, unless essential. Every new module is a supply-chain surface and

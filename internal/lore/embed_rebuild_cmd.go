@@ -66,13 +66,20 @@ var EmbedRebuildCommand = &command.Command[EmbedRebuildInput, EmbedRebuildOutput
 			}, nil
 		}
 
-		// Use a NullEmbedder as placeholder when no real embedder is wired
-		// into the CLI deps yet (QUEST-212 wires the production embedder).
-		// For now the rebuild still performs the reset (zeroes coverage_num,
-		// flips states to pending) which is the user-visible guarantee.
-		e := embed.NewNullEmbedder()
+		ed := embedFromDeps(ctx, d)
+		if !ed.Enabled() {
+			return EmbedRebuildOutput{
+				ProjectID: pid,
+				Disabled:  true,
+				Reason:    "embedder runtime is not wired into this surface; embed-rebuild cannot encode and will not wipe existing vectors",
+			}, nil
+		}
 
-		modelID := report.ModelID
+		e := ed.Embedder
+		modelID := ed.ModelID
+		if modelID == "" {
+			modelID = report.ModelID
+		}
 		if modelID == "" {
 			modelID = string(MetaEmbedderModelID)
 		}

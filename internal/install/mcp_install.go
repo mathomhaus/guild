@@ -50,6 +50,17 @@ type MCPInstallOptions struct {
 	// Yes skips per-command confirmation when combined with Run.
 	Yes bool
 
+	// Update rewrites entries whose configured command path differs from the
+	// current binary's resolved path. Entries that match are still skipped.
+	// Without Update or Force, divergent entries are reported in
+	// PathDivergent and left unchanged. Issue #61.
+	Update bool
+
+	// Force always re-installs detected clients regardless of registration
+	// state. Implies Update. Use when the configured command is unparseable
+	// or the user wants to overwrite without inspection. Issue #61.
+	Force bool
+
 	// Skill is a placeholder for future Claude Code skill installation.
 	Skill bool
 
@@ -77,9 +88,10 @@ type MCPInstallOptions struct {
 
 // ClientInstruction is the computed install command for one detected client.
 type ClientInstruction struct {
-	Name string
-	Cmd  string   // shell-safe display string for printing / confirmation prompts
-	Argv []string // structured argv for exec; never re-parsed from Cmd
+	Name     string
+	Cmd      string   // shell-safe display string for printing / confirmation prompts
+	Argv     []string // structured argv for exec; never re-parsed from Cmd
+	ListArgv []string // argv that lists registered MCP servers; nil = unsupported
 }
 
 // MCPInstallResult reports what was done / printed.
@@ -95,6 +107,15 @@ type MCPInstallResult struct {
 	// --run time. Attempting to exec them would fail, so we skip the
 	// install step and leave the user to install the CLI first.
 	SkippedMissingCLI []string
+	// AlreadyRegistered is the list of client names that were skipped in
+	// --run mode because guild was already present in their MCP config.
+	AlreadyRegistered []string
+	// PathDivergent is the list of client names whose existing guild
+	// entry points at a binary path that differs from the running binary.
+	// Without --update / --force the entry is left unchanged; with the
+	// flag, the install command is re-invoked to refresh the path.
+	// Issue #61.
+	PathDivergent []string
 }
 
 // MCPInstall detects MCP clients, prints the recommended install commands,
@@ -189,11 +210,15 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 	// Build instruction list. Argv is canonical; Cmd is derived for display only.
 	var instructions []ClientInstruction
 	for _, c := range detected {
-		instructions = append(instructions, ClientInstruction{
+		instr := ClientInstruction{
 			Name: c.Name,
 			Argv: c.InstallArgv(binPath),
 			Cmd:  c.InstallCmdDisplay(binPath),
-		})
+		}
+		if c.ListArgv != nil {
+			instr.ListArgv = c.ListArgv()
+		}
+		instructions = append(instructions, instr)
 	}
 	result.Instructions = instructions
 
@@ -219,6 +244,12 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 			return result, nil
 		}
 
+		// Resolve the running binary once for path-divergence comparisons
+		// (#61). Symlink resolution is best-effort: if EvalSymlinks fails
+		// (file removed mid-flight, ENOENT) we fall back to binPath so the
+		// comparison still operates on the absolute path we already have.
+		currentBinPath := evalSymlinkOrFallback(binPath)
+
 		for _, instr := range instructions {
 			// Argv is pre-split; never re-parse Cmd with strings.Fields,
 			// which would shred binary paths that contain spaces.
@@ -236,6 +267,44 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 				fmt.Fprintf(opts.Out, "skipping %s: %s not on PATH\n", instr.Name, binaryName)
 				result.SkippedMissingCLI = append(result.SkippedMissingCLI, instr.Name)
 				continue
+			}
+
+			// Probe the client's MCP list for an existing guild entry.
+			// A failed probe (non-zero exit, unexpected output, missing
+			// ListArgv) returns Missing and falls through to the install
+			// attempt — preserving the old behaviour rather than
+			// silently refusing to register (#27).
+			//
+			// Issue #61: when the entry exists, compare its configured
+			// command path to the running binary. Identical entries are
+			// skipped; divergent entries are reported in PathDivergent
+			// and only refreshed when --update or --force is set.
+			if !opts.Force {
+				registered, configuredPath := isGuildRegistered(opts.execCmdFn, instr.ListArgv)
+				if registered {
+					switch comparePaths(configuredPath, currentBinPath) {
+					case pathIdentical:
+						fmt.Fprintf(opts.Out, "[✓] guild MCP already registered in %s — skipping\n", instr.Name)
+						result.AlreadyRegistered = append(result.AlreadyRegistered, instr.Name)
+						continue
+					case pathDivergent:
+						if !opts.Update {
+							fmt.Fprintf(opts.Out,
+								"[!] guild MCP in %s points at %s but running binary is %s — pass --update to refresh\n",
+								instr.Name, configuredPath, currentBinPath)
+							result.PathDivergent = append(result.PathDivergent, instr.Name)
+							continue
+						}
+						fmt.Fprintf(opts.Out,
+							"[~] guild MCP in %s points at %s — refreshing to %s\n",
+							instr.Name, configuredPath, currentBinPath)
+						result.PathDivergent = append(result.PathDivergent, instr.Name)
+						// Fall through to (re-)install below; the client's
+						// install CLI overwrites or warns on duplicates.
+					}
+					// pathMissing → fall through to install (configured
+					// entry has no parseable command field).
+				}
 			}
 
 			if !opts.Yes {
@@ -388,6 +457,103 @@ func goBinCandidates() []string {
 		candidates = append(candidates, filepath.Join(home, "go", "bin", "guild"))
 	}
 	return candidates
+}
+
+// isGuildRegistered reports whether the client's list-MCP command shows a
+// guild entry, returning the configured command path when one can be
+// extracted. A nil listArgv, an exec error, or an unreadable stdout all
+// fall through to (false, "") so the caller proceeds with the normal
+// install attempt — the probe is best-effort, not authoritative.
+func isGuildRegistered(execCmdFn func(string, ...string) *exec.Cmd, listArgv []string) (registered bool, cmdPath string) {
+	if len(listArgv) == 0 || execCmdFn == nil {
+		return false, ""
+	}
+	//nolint:gosec // listArgv comes from Clients[].ListArgv, not user input.
+	cmd := execCmdFn(listArgv[0], listArgv[1:]...)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, ""
+	}
+	return scanForGuildEntry(out)
+}
+
+// scanForGuildEntry reports whether stdout contains a line identifying
+// "guild" as a registered MCP server, and extracts the configured command
+// path when the line shape exposes one. Recognised shapes cover the CLI
+// outputs of Claude Code, Cursor, and Codex — "guild:" (Claude / Codex
+// human formats, "guild: <command> <args>"), a bare "guild" token, or a
+// "- guild" list entry. The match is anchored at line start (after
+// trimming leading whitespace and list markers) so a stray occurrence
+// inside a command value doesn't produce a false positive.
+//
+// The returned path is the first whitespace-separated token after the
+// "guild:" prefix, or "" when the line carries no command (bare token,
+// or list-marker shape without a colon).
+func scanForGuildEntry(out []byte) (registered bool, cmdPath string) {
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		line = strings.TrimPrefix(line, "- ")
+		line = strings.TrimPrefix(line, "* ")
+		if line == "" {
+			continue
+		}
+		switch {
+		case line == "guild":
+			return true, ""
+		case strings.HasPrefix(line, "guild:"):
+			rest := strings.TrimSpace(strings.TrimPrefix(line, "guild:"))
+			if rest == "" {
+				return true, ""
+			}
+			// First whitespace-separated token is the command path.
+			fields := strings.Fields(rest)
+			return true, fields[0]
+		case strings.HasPrefix(line, "guild ") || strings.HasPrefix(line, "guild\t"):
+			return true, ""
+		}
+	}
+	return false, ""
+}
+
+// pathComparison enumerates the three states from issue #61.
+type pathComparison int
+
+const (
+	pathMissing   pathComparison = iota // configured path is empty/unparseable
+	pathIdentical                       // configured path resolves to the running binary
+	pathDivergent                       // configured path resolves to a different binary
+)
+
+// comparePaths classifies the configured client command path against the
+// running binary's resolved path. Both sides are run through
+// filepath.EvalSymlinks before comparison so a Homebrew shim (a symlink
+// in /opt/homebrew/bin → ../Cellar/.../guild) compares as Identical to
+// the resolved Cellar path written by an earlier install.
+func comparePaths(configured, current string) pathComparison {
+	if configured == "" {
+		return pathMissing
+	}
+	a := evalSymlinkOrFallback(configured)
+	b := evalSymlinkOrFallback(current)
+	if a == b {
+		return pathIdentical
+	}
+	return pathDivergent
+}
+
+// evalSymlinkOrFallback returns filepath.EvalSymlinks(p) when it succeeds,
+// otherwise the input path. EvalSymlinks fails when the file no longer
+// exists (e.g. a stale config still points at an uninstalled binary); in
+// that case we treat the configured path as authoritative and let the
+// caller decide whether the comparison is meaningful.
+func evalSymlinkOrFallback(p string) string {
+	if p == "" {
+		return p
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
 
 // isInteractive reports whether r is a real terminal (stdin TTY).

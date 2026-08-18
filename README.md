@@ -1,6 +1,6 @@
 # The Agent Guild
 
-**A local-first, persistent cognition substrate for AI agents.**
+**Shared context, memory, and task coordination across AI coding agents.**
 
 [![CI](https://github.com/mathomhaus/guild/actions/workflows/ci.yml/badge.svg)](https://github.com/mathomhaus/guild/actions/workflows/ci.yml)
 [![Go 1.25](https://img.shields.io/badge/go-1.25-blue)](https://go.dev)
@@ -36,7 +36,7 @@ On session start, an agent makes a single call to recover the project oath, the 
 
 ## Quick Start
 
-Requires macOS or Linux and an MCP-enabled editor (Claude Code, Codex, Cursor, etc.). No account, no API key.
+Requires macOS, Linux, or Windows and an MCP-enabled editor (Claude Code, Codex, Cursor, etc.). No account, no API key.
 
 ### 1. Install
 
@@ -55,6 +55,28 @@ brew install mathomhaus/tap/guild
 
 Both paths install a binary built with `-tags=withembed`, so semantic
 retrieval works out of the box with no extra steps.
+
+**Windows (pre-built zip, keyword-only retrieval):**
+
+```powershell
+irm https://github.com/mathomhaus/guild/releases/latest/download/install.ps1 | iex
+guild --version   # in a new terminal
+```
+
+Or from cmd.exe:
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://github.com/mathomhaus/guild/releases/latest/download/install.ps1 | iex"
+```
+
+The installer SHA256-verifies the zip, installs to
+`%LOCALAPPDATA%\Programs\guild`, and adds it to your user PATH.
+On Windows, semantic (vector) retrieval is currently disabled —
+`onnxruntime-purego` has no Windows `Dlopen` surface (see
+[`internal/lore/embed/assets/README.md`](./internal/lore/embed/assets/README.md)),
+so search runs the BM25 keyword arm only. Everything else — quests,
+lore, briefs, MCP server, SQLite state under `~\.guild\` — works the
+same as on macOS/Linux.
 
 **Clone and build (ship-ready, embed included):**
 

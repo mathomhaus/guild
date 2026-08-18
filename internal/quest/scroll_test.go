@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScroll_FullHistory(t *testing.T) {
@@ -103,6 +104,10 @@ func TestScroll_OrderChronological(t *testing.T) {
 		if err := Journal(ctx, db, pid, q.ID, "agent", text); err != nil {
 			t.Fatalf("Journal: %v", err)
 		}
+		// Sleep briefly to ensure distinct timestamps for each entry.
+		// This guards against sub-second timestamp collisions that could
+		// cause flaky ordering under -race.
+		time.Sleep(time.Microsecond)
 	}
 
 	res, err := Scroll(ctx, db, pid, q.ID)

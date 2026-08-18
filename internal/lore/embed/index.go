@@ -103,6 +103,15 @@ type Index struct {
 	// (lore_reforge or lore_update with summary change).
 	byEntry map[int64]int
 
+	// epochs[i] is the vector_epoch that stamped vectors[i]: the
+	// snapshot epoch for rows installed by LoadFromDB, the writer's
+	// post-commit epoch for rows installed by Splice. Concurrent
+	// writers splice out of commit order, so same-entry conflicts are
+	// resolved per slot rather than against cachedEpoch (a global
+	// comparison refuses legitimate cross-entry late splices and
+	// permanently drops their vectors).
+	epochs []int64
+
 	// cachedEpoch is the meta.vector_epoch value observed at the last
 	// successful LoadFromDB or Splice. CheckAndReload compares this
 	// against the freshly read epoch under the read lock to decide
@@ -231,6 +240,17 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		}
 	}
 
+	// Read the epoch BEFORE scanning rows so it is a lower bound for
+	// the snapshot: every commit visible to the SELECT below happened
+	// at or after this epoch. Reading it after the scan inverts that
+	// bound and lets a concurrent writer's commit land between the two
+	// reads, stamping a pre-commit row snapshot with a post-commit
+	// epoch; CheckAndReload then trusts the stale snapshot forever.
+	epoch, err := readEpoch(ctx, db, i.corpus.MetaKey(FieldVectorEpoch))
+	if err != nil {
+		return 0, err
+	}
+
 	// Stream the corpus's vector table in one SELECT. entry_id is the
 	// PK so the default ordering is by id; that is fine for parallel-
 	// slice layout and gives tests a deterministic load order.
@@ -290,17 +310,30 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, fmt.Errorf("embed/index: iterate %s: %w", i.corpus.VectorTable(), err)
 	}
 
-	// Refresh epoch from meta using the corpus's meta key. A missing
-	// row (fresh DB) yields 0.
-	epoch, err := readEpoch(ctx, db, i.corpus.MetaKey(FieldVectorEpoch))
-	if err != nil {
-		return 0, err
-	}
-
 	i.bindMu.Lock()
+	if i.loaded && epoch < i.cachedEpoch {
+		// A concurrent Splice advanced the index past this snapshot
+		// (its writer committed after our epoch read). Installing the
+		// snapshot would silently drop that newer vector. Discard;
+		// the in-memory state is already at least as fresh as the DB
+		// state this load observed.
+		cached := i.cachedEpoch
+		i.bindMu.Unlock()
+		i.logger.Debug("embed/index: discarded stale load snapshot",
+			"snapshot_epoch", epoch,
+			"cached_epoch", cached,
+			"rows", len(newVecs),
+		)
+		return len(newVecs), nil
+	}
+	newEpochs := make([]int64, len(newVecs))
+	for j := range newEpochs {
+		newEpochs[j] = epoch
+	}
 	i.vectors = newVecs
 	i.entries = newEntries
 	i.byEntry = newByID
+	i.epochs = newEpochs
 	i.cachedEpoch = epoch
 	i.loaded = true
 	i.bindMu.Unlock()
@@ -353,15 +386,23 @@ func (i *Index) CheckAndReload(ctx context.Context, db *sql.DB) (bool, error) {
 }
 
 // Splice updates or inserts a single vector under the write lock and
-// bumps cachedEpoch to newEpoch. Used by the Tx2 writer path so the
-// writer process does not have to round-trip through LoadFromDB after
-// a successful inscribe.
+// advances cachedEpoch to newEpoch when newEpoch is larger. Used by
+// the Tx2 writer path so the writer process does not have to
+// round-trip through LoadFromDB after a successful inscribe.
 //
-// If entryID already has a slot, its vector is replaced in place. The
-// Quantize contract is the caller's responsibility; Splice verifies
-// the length is VecDim and errors otherwise. newEpoch must be >= the
-// current cachedEpoch; a strictly smaller value returns an error to
-// catch caller bugs (e.g. passing the pre-increment epoch).
+// Concurrent writers splice out of commit order: a writer that
+// committed at epoch N can call Splice after a writer that committed
+// at epoch N+1. That is normal, not a caller bug. A new entry always
+// lands regardless of epoch ordering (refusing it would drop the
+// vector permanently, because CheckAndReload sees the higher cached
+// epoch and never reloads). An existing entry is only overwritten
+// when newEpoch >= the epoch that stamped its slot, so an older
+// concurrent re-embed cannot clobber newer content; the stale splice
+// is skipped silently because the DB row it represents is already
+// superseded.
+//
+// The Quantize contract is the caller's responsibility; Splice
+// verifies the length is VecDim and errors otherwise.
 func (i *Index) Splice(entryID int64, vec []int8, newEpoch int64) error {
 	if len(vec) != VecDim {
 		return fmt.Errorf("embed/index: Splice: vec len %d != %d", len(vec), VecDim)
@@ -376,19 +417,21 @@ func (i *Index) Splice(entryID int64, vec []int8, newEpoch int64) error {
 	i.bindMu.Lock()
 	defer i.bindMu.Unlock()
 
-	if newEpoch < i.cachedEpoch {
-		return fmt.Errorf("embed/index: Splice: newEpoch %d < cached %d", newEpoch, i.cachedEpoch)
-	}
-
 	if slot, ok := i.byEntry[entryID]; ok {
-		i.vectors[slot] = stored
+		if newEpoch >= i.epochs[slot] {
+			i.vectors[slot] = stored
+			i.epochs[slot] = newEpoch
+		}
 	} else {
 		slot := len(i.vectors)
 		i.vectors = append(i.vectors, stored)
 		i.entries = append(i.entries, entryID)
+		i.epochs = append(i.epochs, newEpoch)
 		i.byEntry[entryID] = slot
 	}
-	i.cachedEpoch = newEpoch
+	if newEpoch > i.cachedEpoch {
+		i.cachedEpoch = newEpoch
+	}
 	// A Splice on an unloaded index flips loaded=true: the caller is
 	// asserting the row is canonical, so subsequent CheckAndReload
 	// calls can trust the cached epoch rather than forcing a reload.

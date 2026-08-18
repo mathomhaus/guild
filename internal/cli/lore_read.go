@@ -15,6 +15,7 @@ import (
 
 	"github.com/mathomhaus/guild/internal/command"
 	"github.com/mathomhaus/guild/internal/config"
+	"github.com/mathomhaus/guild/internal/guildpath"
 	"github.com/mathomhaus/guild/internal/lore"
 	"github.com/mathomhaus/guild/internal/project"
 	"github.com/mathomhaus/guild/internal/storage"
@@ -39,12 +40,16 @@ func openLoreDB(ctx context.Context) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("cli: ensure ~/.guild: %w", err)
+	if err := guildpath.EnsureDir(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("cli: %w", err)
 	}
 	db, err := storage.Open(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	if err := guildpath.TightenDBPerms(path); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("cli: %w", err)
 	}
 	if err := storage.Migrate(ctx, db, "lore"); err != nil {
 		_ = db.Close()

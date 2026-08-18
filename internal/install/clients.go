@@ -20,6 +20,13 @@ type Client struct {
 	// which breaks any binary path that contains spaces.
 	InstallArgv func(binPath string) []string
 
+	// ListArgv returns the argv for listing registered MCP servers. Used
+	// to short-circuit install when guild is already registered — avoids
+	// the noisy "MCP server guild already exists in user config" error
+	// on repeat `guild init` runs. Optional: a nil ListArgv disables the
+	// pre-check and preserves historical behaviour.
+	ListArgv func() []string
+
 	ManualSnippet string // optional: fallback JSON/TOML for clients without a CLI
 }
 
@@ -73,6 +80,7 @@ var Clients = []Client{
 		InstallArgv: func(b string) []string {
 			return []string{"claude", "mcp", "add", "guild", "--scope", "user", "--", b, "mcp", "serve"}
 		},
+		ListArgv: func() []string { return []string{"claude", "mcp", "list"} },
 	},
 	{
 		Name:        "Cursor",
@@ -81,6 +89,7 @@ var Clients = []Client{
 		InstallArgv: func(b string) []string {
 			return []string{"cursor", "mcp", "add", "guild", "--", b, "mcp", "serve"}
 		},
+		ListArgv: func() []string { return []string{"cursor", "mcp", "list"} },
 	},
 	{
 		Name:        "Codex (OpenAI)",
@@ -89,5 +98,8 @@ var Clients = []Client{
 		InstallArgv: func(b string) []string {
 			return []string{"codex", "mcp", "add", "guild", "--", b, "mcp", "serve"}
 		},
+		// ListArgv left nil until `codex mcp list` output shape is verified
+		// against a real run; nil disables the pre-check and the install
+		// attempt proceeds as before.
 	},
 }

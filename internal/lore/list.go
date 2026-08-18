@@ -20,7 +20,9 @@ type ListFilters struct {
 }
 
 // List returns every entry matching the supplied filters, sorted the
-// way the CLI prints them: kind ASC, then created_at DESC.
+// way the CLI prints them: kind ASC, then created_at DESC, with
+// e.id DESC as a stable tie-breaker so same-second inserts have
+// deterministic newest-first ordering across reads.
 //
 // Project="" + AllProjects is not supported — List always scopes by
 // project. For a cross-project dump, callers can iterate project.List
@@ -72,7 +74,7 @@ func listWithFilters(ctx context.Context, db *sql.DB, filters *ListFilters) ([]*
 	sqlText := `SELECT ` + entryColumns + `
 		FROM entries e
 		WHERE ` + strings.Join(clauses, " AND ") + `
-		ORDER BY e.kind ASC, e.created_at DESC`
+		ORDER BY e.kind ASC, e.created_at DESC, e.id DESC`
 
 	rows, err := db.QueryContext(ctx, sqlText, args...) //sqlcheck:ignore // sqlText is a constant template; clauses are hard-coded fragments; values reach SQL via args
 	if err != nil {

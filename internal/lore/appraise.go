@@ -344,7 +344,7 @@ func runLIKEFallback(ctx context.Context, db *sql.DB, query string, params *Appr
 	sqlText := `SELECT ` + entryColumns + `, 0.0 AS bm25_score
 		FROM entries e
 		WHERE (e.title LIKE ? OR e.summary LIKE ? OR COALESCE(e.tags,'') LIKE ?)` + where + `
-		ORDER BY e.created_at DESC
+		ORDER BY e.created_at DESC, e.id DESC
 		LIMIT ?`
 	all := []any{like, like, like}
 	all = append(all, args...)

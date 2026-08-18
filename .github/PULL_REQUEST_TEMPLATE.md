@@ -7,6 +7,8 @@ small fix, open an issue or Discussion first.
 ## Summary
 
 <!-- One or two sentences on what this PR does and why. -->
+<!-- If this PR is stacked on an in-flight PR (i.e. base is not `main`),
+     add "Stacked on: #N" near the top so reviewers see the dependency. -->
 
 ## Linked quest or issue
 
