@@ -445,7 +445,7 @@ func bumpAccessCounters(ctx context.Context, db *sql.DB, now time.Time, results 
 // once so every query that returns *Entry uses the same column order
 // (which scanEntry relies on).
 const entryColumns = `
-	e.id, e.project_id, e.topic, e.kind, e.title, e.summary,
+	e.id, e.project_id, e.topic, e.kind, e.title, e.summary, e.body,
 	COALESCE(e.tags,''), COALESCE(e.file_path,''),
 	COALESCE(e.source,''), e.status,
 	e.valid_days, e.needs_review, COALESCE(e.prompted_by,''),
@@ -464,7 +464,7 @@ func scanEntry(row interface {
 	var lastAccessed sql.NullString
 
 	if err := row.Scan(
-		&e.ID, &e.ProjectID, &e.Topic, &e.Kind, &e.Title, &e.Summary,
+		&e.ID, &e.ProjectID, &e.Topic, &e.Kind, &e.Title, &e.Summary, &e.Body,
 		&tagsStr, &filePath, &source, &e.Status,
 		&validDays, &needsReviewInt, &promptedBy,
 		&createdAt, &updatedAt, &e.AccessCount, &lastAccessed,
@@ -502,7 +502,7 @@ func scanEntryWithBM25(row interface {
 	var lastAccessed sql.NullString
 
 	if err := row.Scan(
-		&e.ID, &e.ProjectID, &e.Topic, &e.Kind, &e.Title, &e.Summary,
+		&e.ID, &e.ProjectID, &e.Topic, &e.Kind, &e.Title, &e.Summary, &e.Body,
 		&tagsStr, &filePath, &source, &e.Status,
 		&validDays, &needsReviewInt, &promptedBy,
 		&createdAt, &updatedAt, &e.AccessCount, &lastAccessed,

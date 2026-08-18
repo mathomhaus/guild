@@ -470,6 +470,75 @@ func TestInscribe_Informs_SelfLink(t *testing.T) {
 	}
 }
 
+// TestInscribe_Body_PersistsAndStudyReturnsIt verifies the verbatim body
+// survives the write and comes back intact on the deep read — the whole
+// point of the field. summary is the search snippet; body is the payload.
+func TestInscribe_Body_PersistsAndStudyReturnsIt(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "bodyproj")
+
+	const fullBody = "# Investigation\n\nTokens expire at exactly 3600s. The refresh\nendpoint returns a new pair; the old refresh token is revoked on use.\nSee the trace in run-4417 for the 401 → 200 sequence."
+
+	res, err := Inscribe(ctx, db, &InscribeParams{
+		ProjectID: "bodyproj",
+		Kind:      KindObservation,
+		Title:     "auth token refresh lifetime",
+		Summary:   "tokens expire at 1h; refresh rotates the pair.",
+		Body:      fullBody,
+		Topic:     "auth",
+		Now:       time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("inscribe: %v", err)
+	}
+	if res.Entry.Body != fullBody {
+		t.Errorf("returned Entry.Body = %q, want %q", res.Entry.Body, fullBody)
+	}
+
+	// The read surface (study) must return the full body verbatim.
+	study, err := Study(ctx, db, res.Entry.ID)
+	if err != nil {
+		t.Fatalf("study: %v", err)
+	}
+	if study.Entry.Body != fullBody {
+		t.Errorf("studied Entry.Body = %q, want %q", study.Entry.Body, fullBody)
+	}
+	// summary is independent of body — it stays the short distillation.
+	if study.Entry.Summary == study.Entry.Body {
+		t.Error("summary and body should be distinct; body must not overwrite summary")
+	}
+}
+
+// TestInscribe_Body_DefaultsEmpty verifies an inscribe with no body leaves
+// the column at the empty-string default (pre-009 / no-body behavior) and
+// reads back as "" rather than erroring on the NOT NULL column.
+func TestInscribe_Body_DefaultsEmpty(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "bodyproj")
+
+	res, err := Inscribe(ctx, db, &InscribeParams{
+		ProjectID: "bodyproj",
+		Kind:      KindResearch,
+		Title:     "entry with no body supplied",
+		Summary:   "a summary long enough to pass validation.",
+		Topic:     "test",
+		Now:       time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("inscribe: %v", err)
+	}
+	if res.Entry.Body != "" {
+		t.Errorf("Entry.Body = %q, want empty string", res.Entry.Body)
+	}
+	study, err := Study(ctx, db, res.Entry.ID)
+	if err != nil {
+		t.Fatalf("study: %v", err)
+	}
+	if study.Entry.Body != "" {
+		t.Errorf("studied Entry.Body = %q, want empty string", study.Entry.Body)
+	}
+}
+
 // --- tiny utility: contains without importing strings from test helpers ---
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
