@@ -15,22 +15,25 @@ type EmbedderHealthInput struct {
 	Project string `json:"project,omitempty"`
 }
 
-// EmbedderHealthCmdOutput wraps the HealthReport for the command registry.
+// EmbedderHealthCmdOutput wraps per-corpus HealthReports for the command registry.
 type EmbedderHealthCmdOutput struct {
-	Report *embed.HealthReport `json:"report"`
+	LoreReport  *embed.HealthReport `json:"lore_report"`
+	QuestReport *embed.HealthReport `json:"quest_report"`
 }
 
 // EmbedderHealthCommand is the registry spec for `guild lore health`.
-// It reads meta rows and lore_vectors/entries counts and renders the embedder
-// health section. Does not touch the existing commune/inquest/meld output.
+// It reads meta rows and vector/entity counts for both lore and quest
+// corpora and renders the embedder health sections. Does not touch the
+// existing commune/inquest/meld output.
 var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealthCmdOutput]{
 	Name:       "lore_health",
 	CLIPath:    []string{"lore", "health"},
 	CLIAliases: []string{"embedder-health"},
 	Short:      "embedder health report (coverage, pending, stale, errors)",
-	Long: "Print the embedder health section: model_id, tokenizer_hash, runtime_version, dim, " +
-		"coverage (num/den and percent), pending count, stale count, last encode error " +
-		"(if any), last successful encode timestamp, and rolling embed_error_count.",
+	Long: "Print the embedder health sections for lore and quest corpora: model_id, " +
+		"tokenizer_hash, runtime_version, dim, coverage (num/den and percent), pending " +
+		"count, stale count, last encode error (if any), last successful encode " +
+		"timestamp, and rolling embed_error_count.",
 	Args: []command.ArgSpec{
 		{Name: "project", Short: "p", Kind: command.ArgFlag, Type: command.ArgString, Help: "project override"},
 	},
@@ -49,11 +52,23 @@ var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealth
 			return EmbedderHealthCmdOutput{}, err
 		}
 
-		report, err := embed.ReadHealthReport(ctx, db, embed.LoreCorpus{})
+		loreReport, err := embed.ReadHealthReport(ctx, db, embed.LoreCorpus{})
 		if err != nil {
 			return EmbedderHealthCmdOutput{}, fmt.Errorf("lore: health: %w", err)
 		}
-		return EmbedderHealthCmdOutput{Report: report}, nil
+
+		questReport := emptyQuestHealthReport()
+		if d.OpenQuestDB != nil {
+			questDB, qerr := d.OpenQuestDB(ctx)
+			if qerr == nil {
+				defer func() { _ = questDB.Close() }()
+				if report, rerr := embed.ReadHealthReport(ctx, questDB, embed.QuestCorpus{}); rerr == nil {
+					questReport = report
+				}
+			}
+		}
+
+		return EmbedderHealthCmdOutput{LoreReport: loreReport, QuestReport: questReport}, nil
 	},
 	CLIFormat: func(s command.CLISink, o EmbedderHealthCmdOutput) string {
 		return formatEmbedderHealth(s, o)
@@ -63,19 +78,36 @@ var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealth
 	},
 }
 
-// formatEmbedderHealth renders the embedder health section.
+// emptyQuestHealthReport returns a zeroed report so the quest section
+// renders 0/0 coverage when quest.db is unavailable or unreadable.
+func emptyQuestHealthReport() *embed.HealthReport {
+	return &embed.HealthReport{State: embed.EmbedderStateDisabled}
+}
+
+// formatEmbedderHealth renders the lore and quest embedder health sections.
 // Works for both CLI and MCP sinks (both satisfy the lineSink interface).
 func formatEmbedderHealth(s lineSink, o EmbedderHealthCmdOutput) string {
-	r := o.Report
+	var b strings.Builder
+	b.WriteString(formatCorpusEmbedderHealth(s, "lore", o.LoreReport))
+	b.WriteString("\n")
+	b.WriteString(formatCorpusEmbedderHealth(s, "quest", o.QuestReport))
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatCorpusEmbedderHealth renders one corpus embedder health section.
+func formatCorpusEmbedderHealth(s lineSink, corpus string, r *embed.HealthReport) string {
 	if r == nil {
-		return strings.TrimRight(s.Line("🔮", "[health]", "embedder: no data available"), "\n")
+		r = emptyQuestHealthReport()
 	}
 
 	var b strings.Builder
-	b.WriteString(s.Line("🔮", "[health]", "embedder section"))
+	b.WriteString(s.Line("🔮", "[health]", fmt.Sprintf("%s corpus embedder section", corpus)))
 
 	// State line.
 	stateStr := string(r.State)
+	if stateStr == "" {
+		stateStr = string(embed.EmbedderStateDisabled)
+	}
 	sessionLine := r.SessionLine()
 	if sessionLine != "" {
 		stateStr += fmt.Sprintf(": %s", sessionLine)
