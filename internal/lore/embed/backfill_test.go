@@ -307,6 +307,37 @@ func TestReconcileDen_FixesDrift(t *testing.T) {
 	}
 }
 
+// TestReconcileNum_FixesDrift verifies that ReconcileNum corrects a stale
+// vector_coverage_num by setting it to the live COUNT(*) of lore_vectors.
+func TestReconcileNum_FixesDrift(t *testing.T) {
+	db := newTestDB(t)
+	ids := seedEntries(t, db, 3)
+	ctx := context.Background()
+
+	// Insert vectors for two of the three entries.
+	for _, id := range ids[:2] {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO lore_vectors (entry_id, model_id, dim, vec, encoded_at, content_hash)
+			 VALUES (?, 'test', 4, X'00000000', 1, 'h')`, id,
+		); err != nil {
+			t.Fatalf("insert vector: %v", err)
+		}
+	}
+
+	setMetaInt(t, db, "vector_coverage_num", 0)
+	if got := readMetaInt(t, db, "vector_coverage_num"); got != 0 {
+		t.Fatalf("precondition: num=%d want 0", got)
+	}
+
+	if err := ReconcileNum(context.Background(), db, LoreCorpus{}); err != nil {
+		t.Fatalf("ReconcileNum: %v", err)
+	}
+
+	if got := readMetaInt(t, db, "vector_coverage_num"); got != 2 {
+		t.Errorf("num after reconcile: got %d want 2", got)
+	}
+}
+
 // TestBackfill_ReconcilesDenBeforeWriting verifies that Backfill fixes a
 // stale den before writing vectors, so num <= den holds after the run.
 func TestBackfill_ReconcilesDenBeforeWriting(t *testing.T) {

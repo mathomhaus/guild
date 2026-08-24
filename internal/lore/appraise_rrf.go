@@ -8,10 +8,30 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mathomhaus/guild/internal/lore/embed"
 )
+
+// coverageGateState caches live vector coverage counts keyed by
+// meta.vector_epoch. Appraise's RRF gate reads coverage on every query;
+// the epoch check is a single PK lookup, and the two COUNT(*) queries
+// run only when the corpus has changed since the last appraise.
+type coverageGateState struct {
+	epoch int64
+	num   int64
+	den   int64
+}
+
+// coverageGate is process-local; two servers reading the same epoch
+// make the same decision, so cross-process coherence is automatic for
+// a given epoch value.
+var coverageGate atomic.Pointer[coverageGateState]
+
+// liveCoverageQueryCount increments on every cache miss that runs the
+// live COUNT(*) pair. Tests assert the hot path does not re-query.
+var liveCoverageQueryCount atomic.Int64
 
 // appraiseRRF is the single-project RRF-fused retrieval path. It is
 // called only from Appraise, only when params.Embed is Enabled and
@@ -265,12 +285,12 @@ func appraiseCrossProject(
 	return out, true, nil
 }
 
-// readCoverage returns (embedder_state, coverage_ratio, err). A zero
-// denominator yields coverage=1.0 (the "no active entries" state is
-// treated as "nothing to embed, so coverage is fully satisfied"). This
-// avoids a divide-by-zero that would otherwise mask a freshly
-// initialized DB as "below threshold" and hide it behind BM25 for no
-// good reason.
+// readCoverage returns (embedder_state, coverage_ratio, err). Coverage
+// is computed from live COUNT(*) queries (lore_vectors rows vs active
+// entries) cached on meta.vector_epoch so stale meta.vector_coverage_*
+// counters cannot silently disable the semantic arm. A zero denominator
+// yields coverage=1.0 (the "no active entries" state is treated as
+// "nothing to embed, so coverage is fully satisfied").
 func readCoverage(ctx context.Context, db *sql.DB) (state string, coverage float64, err error) {
 	scanErr := db.QueryRowContext(ctx,
 		`SELECT value FROM meta WHERE key = 'embedder_state'`,
@@ -282,11 +302,7 @@ func readCoverage(ctx context.Context, db *sql.DB) (state string, coverage float
 		return "", 0, fmt.Errorf("lore: appraise: read embedder_state: %w", scanErr)
 	}
 
-	num, err := readMetaInt(ctx, db, "vector_coverage_num")
-	if err != nil {
-		return "", 0, err
-	}
-	den, err := readMetaInt(ctx, db, "vector_coverage_den")
+	num, den, err := liveCoverageCounts(ctx, db)
 	if err != nil {
 		return "", 0, err
 	}
@@ -294,6 +310,41 @@ func readCoverage(ctx context.Context, db *sql.DB) (state string, coverage float
 		return state, 1.0, nil
 	}
 	return state, float64(num) / float64(den), nil
+}
+
+// liveCoverageCounts returns (num, den) from live SQL, using an
+// epoch-keyed process-local cache. Predicates mirror assessCorpus in
+// internal/mcp/embed_autobackfill.go and ReconcileDen's ActivePredicate.
+//
+// Invalidation is keyed on meta.vector_epoch, which bumps on every
+// successful vector write and at backfill cycle end. Denominator-only
+// changes from inscribe/seal do not bump epoch, so the cache may be
+// briefly stale until the next vector write. That window is bounded and
+// far smaller than the permanent meta-counter drift this gate fixes.
+func liveCoverageCounts(ctx context.Context, db *sql.DB) (num, den int64, err error) {
+	epoch, err := readMetaInt(ctx, db, "vector_epoch")
+	if err != nil {
+		return 0, 0, err
+	}
+	if cached := coverageGate.Load(); cached != nil && cached.epoch == epoch {
+		return cached.num, cached.den, nil
+	}
+
+	corpus := embed.LoreCorpus{}
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM %s`, corpus.VectorTable()), //nolint:gosec // table from compile-time corpus accessor
+	).Scan(&num); err != nil {
+		return 0, 0, fmt.Errorf("lore: appraise: count lore_vectors: %w", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE %s`, corpus.EntityTable(), corpus.ActivePredicate()), //nolint:gosec // table + predicate from compile-time corpus accessors
+	).Scan(&den); err != nil {
+		return 0, 0, fmt.Errorf("lore: appraise: count active entries: %w", err)
+	}
+
+	coverageGate.Store(&coverageGateState{epoch: epoch, num: num, den: den})
+	liveCoverageQueryCount.Add(1)
+	return num, den, nil
 }
 
 // readMetaInt reads a meta row and parses its decimal value. Missing
