@@ -1,10 +1,15 @@
-# The Agent Guild
+<h1 align="center">The Agent Guild</h1>
+<p align="center"><b>Shared context, memory, and task coordination across AI coding agents.</b></p>
 
-**Shared context, memory, and task coordination across AI coding agents.**
+<p align="center">
+  <a href="https://trendshift.io/repositories/27837?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27837" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27837/daily?language=Go" alt="mathomhaus%2Fguild | Trendshift" width="250" height="55"/></a>
+</p>
 
-[![CI](https://github.com/mathomhaus/guild/actions/workflows/ci.yml/badge.svg)](https://github.com/mathomhaus/guild/actions/workflows/ci.yml)
-[![Go 1.25](https://img.shields.io/badge/go-1.25-blue)](https://go.dev)
-[![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](./LICENSE)
+<p align="center">
+  <a href="https://github.com/mathomhaus/guild/actions/workflows/ci.yml"><img src="https://github.com/mathomhaus/guild/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/go-1.25-blue" alt="Go 1.25"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="Apache-2.0"></a>
+</p>
 
 ## What Is It
 
