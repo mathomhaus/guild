@@ -10,6 +10,29 @@ import (
 	"testing"
 )
 
+// configOnlyClient builds a Client detected via its config probe but whose
+// CLI binary is absent from PATH. Used to exercise issue #90.
+func configOnlyClient(t *testing.T, name, cliProbe, configRelPath string) Client {
+	t.Helper()
+	home := t.TempDir()
+	configPath := filepath.Join(home, strings.TrimPrefix(configRelPath, "~/"))
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write config probe: %v", err)
+	}
+	t.Setenv("HOME", home)
+	return Client{
+		Name:        name,
+		CLIProbe:    cliProbe,
+		ConfigProbe: configRelPath,
+		InstallArgv: func(binPath string) []string {
+			return []string{cliProbe, "mcp", "add", "guild", "--", binPath, "mcp", "serve"}
+		},
+	}
+}
+
 // fakeClient builds a Client that always reports Detected()=true by pointing
 // CLIProbe at a real executable on PATH. Paired with an injected execCmdFn,
 // lets tests observe the MCP registration path without running real CLI.
@@ -564,5 +587,42 @@ func TestInit_MCPRegistration_NoClient_PrintsHint(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no MCP client detected") {
 		t.Errorf("expected manual-setup hint; got:\n%s", out.String())
+	}
+}
+
+// Config-detected client without CLI on PATH must be skipped in the init
+// plan and must not invoke registration (issue #90).
+func TestInit_MCPRegistration_SkipsConfigOnlyClientWithoutCLI(t *testing.T) {
+	ctx := context.Background()
+	dir := makeRepo(t, "skipmcp")
+	loreDB, questDB := testDBPaths(t)
+	var out bytes.Buffer
+	var calls [][]string
+
+	missingCLI := "nonexistent-init-cli-xyzzy-99"
+	client := configOnlyClient(t, "Cursor", missingCLI, "~/.cursor/mcp.json")
+
+	_, err := Init(ctx, dir, InitOptions{
+		Yes:          true,
+		Out:          &out,
+		In:           &bytes.Buffer{},
+		LoreDBPath:   loreDB,
+		QuestDBPath:  questDB,
+		clients:      []Client{client},
+		execCmdFn:    recordingExec(&calls),
+		executableFn: fakeExecutable(t),
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "skipping Cursor: "+missingCLI+" not on PATH") {
+		t.Errorf("expected skip notice in plan; got:\n%s", output)
+	}
+	if strings.Contains(output, "no MCP client detected") {
+		t.Errorf("should not print no-client hint when client was detected but skipped:\n%s", output)
+	}
+	if len(calls) != 0 {
+		t.Errorf("registration must not run when CLI missing, got %d calls: %+v", len(calls), calls)
 	}
 }
