@@ -190,6 +190,50 @@ func ReconcileDen(ctx context.Context, db *sql.DB, corpus VectorCorpus) error {
 	return nil
 }
 
+// ReconcileNum resets the corpus's vector_coverage_num meta row to the
+// live COUNT(*) of vector rows. Runs inside a single BEGIN IMMEDIATE so
+// the write is atomic with respect to concurrent writers.
+//
+// Pair with ReconcileDen via coverage-reconcile so operators can repair
+// both sides of the coverage ratio when meta counters drift from live
+// state. LORE-373 / issue #76.
+func ReconcileNum(ctx context.Context, db *sql.DB, corpus VectorCorpus) error {
+	if db == nil {
+		return fmt.Errorf("embed: ReconcileNum: nil db")
+	}
+	if corpus == nil {
+		corpus = LoreCorpus{}
+	}
+	conn, rollback, err := beginImmediateLocal(ctx, db, "reconcile-num")
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	committed := false
+	defer rollback(&committed)
+
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, corpus.VectorTable())
+	var count int64
+	if err := conn.QueryRowContext(ctx, countQuery).Scan(&count); err != nil { //nolint:sqlcheck // table name is a compile-time corpus accessor.
+		return fmt.Errorf("embed: ReconcileNum: count vectors: %w", err)
+	}
+
+	numKey := corpus.MetaKey(FieldVectorCoverageNum)
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO meta (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		numKey, strconv.FormatInt(count, 10),
+	); err != nil {
+		return fmt.Errorf("embed: ReconcileNum: upsert %s: %w", numKey, err)
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("embed: ReconcileNum: commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 // backfillFailureLogCap is the maximum number of per-iteration WARN
 // lines Backfill emits before suppressing the rest with a single
 // "[N more failures suppressed]" summary. 10 is enough to characterize
