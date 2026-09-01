@@ -93,6 +93,7 @@ func buildMCPCommandDeps() command.Deps {
 func buildMCPLoreDeps() command.Deps {
 	d := command.Deps{
 		OpenDB:           openLoreDB,
+		OpenQuestDB:      openQuestDB,
 		ResolveProj:      resolveProjectAutoBootstrap,
 		Now:              time.Now,
 		RecordTelemetry:  recordMCPTelemetry,
