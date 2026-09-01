@@ -697,6 +697,106 @@ func TestScanForGuildEntry(t *testing.T) {
 	}
 }
 
+func TestScanForGuildEntry_CodexJSON(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		want     bool
+		wantPath string
+	}{
+		{
+			name: "registered stdio",
+			in: `[{"name":"guild","transport":{"type":"stdio","command":"/usr/local/bin/guild","args":["mcp","serve"]}}]`,
+			want: true, wantPath: "/usr/local/bin/guild",
+		},
+		{
+			name: "registered http no command path",
+			in: `[{"name":"guild","transport":{"type":"streamable_http","url":"https://example.com/mcp"}}]`,
+			want: true, wantPath: "",
+		},
+		{
+			name: "other server only",
+			in: `[{"name":"context7","transport":{"type":"stdio","command":"npx"}}]`,
+			want: false, wantPath: "",
+		},
+		{
+			name: "empty list",
+			in: `[]`,
+			want: false, wantPath: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, path := scanForGuildEntry([]byte(tc.in))
+			if got != tc.want {
+				t.Errorf("scanForGuildEntry(%q) found = %v, want %v", tc.in, got, tc.want)
+			}
+			if path != tc.wantPath {
+				t.Errorf("scanForGuildEntry(%q) path = %q, want %q", tc.in, path, tc.wantPath)
+			}
+		})
+	}
+}
+
+// TestMCPInstall_Run_SkipsAlreadyRegistered_Codex verifies that Codex's
+// permissive `mcp add` does not create duplicate guild entries on repeat
+// `guild init --yes` runs once `codex mcp list --json` is wired up (#14).
+func TestMCPInstall_Run_SkipsAlreadyRegistered_Codex(t *testing.T) {
+	var installCalls, listCalls int
+
+	c := alwaysDetected("Codex (OpenAI)", func(b string) []string {
+		return []string{"codex", "mcp", "add", "guild", "--", b, "mcp", "serve"}
+	})
+	c.ListArgv = func() []string { return []string{"codex-mcp-list", "--json"} }
+
+	dir := t.TempDir()
+	fakeBin := dir + "/guild"
+	if err := os.WriteFile(fakeBin, []byte{}, 0o600); err != nil {
+		t.Fatalf("create temp binary: %v", err)
+	}
+
+	jsonOut := `[{"name":"guild","transport":{"type":"stdio","command":"` + fakeBin + `","args":["mcp","serve"]}}]`
+
+	var buf bytes.Buffer
+	opts := MCPInstallOptions{
+		Run:          true,
+		Yes:          true,
+		Out:          &buf,
+		In:           &bytes.Buffer{},
+		clients:      []Client{c},
+		executableFn: func() (string, error) { return fakeBin, nil },
+		execCmdFn: func(name string, arg ...string) *exec.Cmd {
+			switch name {
+			case "codex-mcp-list":
+				listCalls++
+				return exec.Command("printf", "%s", jsonOut)
+			case "codex":
+				installCalls++
+				return exec.Command("true")
+			}
+			return exec.Command("false")
+		},
+		lookPathFn: func(name string) (string, error) { return name, nil },
+	}
+
+	result, err := MCPInstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("MCPInstall --run --yes: %v", err)
+	}
+	if listCalls != 1 {
+		t.Errorf("list probe ran %d times, want 1", listCalls)
+	}
+	if installCalls != 0 {
+		t.Errorf("install ran %d times, want 0 (already registered in Codex)", installCalls)
+	}
+	if got := len(result.AlreadyRegistered); got != 1 {
+		t.Errorf("AlreadyRegistered len = %d, want 1", got)
+	}
+	if !strings.Contains(buf.String(), "already registered in Codex (OpenAI)") {
+		t.Errorf("output missing skip notice:\n%s", buf.String())
+	}
+}
+
 // TestMCPInstall_Run_NilListArgv_FallsThrough verifies that a client whose
 // ListArgv is nil (no list-MCP CLI shape known) skips the probe entirely
 // and proceeds with the install as the unconditional first-run path did.

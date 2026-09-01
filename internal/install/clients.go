@@ -98,8 +98,8 @@ var Clients = []Client{
 		InstallArgv: func(b string) []string {
 			return []string{"codex", "mcp", "add", "guild", "--", b, "mcp", "serve"}
 		},
-		// ListArgv left nil until `codex mcp list` output shape is verified
-		// against a real run; nil disables the pre-check and the install
-		// attempt proceeds as before.
+		// JSON output is stable across Codex versions; the human table layout
+		// varies by transport type. Issue #14.
+		ListArgv: func() []string { return []string{"codex", "mcp", "list", "--json"} },
 	},
 }
