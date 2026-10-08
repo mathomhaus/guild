@@ -6,15 +6,29 @@ Every `guild <verb>` subcommand generated from the live cobra tree.
 
 ## Verbs
 
+- [`guild daemon`](#guild-daemon) — guild daemon subcommands
+- [`guild daemon install`](#guild-daemon-install) — install the guild daemon as a login service (launchd agent / systemd user unit)
+- [`guild daemon restart`](#guild-daemon-restart) — restart the guild daemon (stop, then start)
+- [`guild daemon run`](#guild-daemon-run) — run the guild daemon in the foreground (MCP sessions over a unix socket)
+- [`guild daemon start`](#guild-daemon-start) — start the guild daemon in the background
+- [`guild daemon status`](#guild-daemon-status) — show whether the guild daemon is running
+- [`guild daemon stop`](#guild-daemon-stop) — stop the running guild daemon
+- [`guild daemon uninstall`](#guild-daemon-uninstall) — remove the guild daemon login service
 - [`guild hints`](#guild-hints) — hint engine inspection + administration
 - [`guild hints disable`](#guild-hints-disable) — disable a rule
 - [`guild hints enable`](#guild-hints-enable) — re-enable a previously disabled rule
 - [`guild hints list`](#guild-hints-list) — list all registered hint rules with severity and enabled state
 - [`guild hints prune`](#guild-hints-prune) — run the auto-prune pass (demote/disable rules below 14.46% hit rate)
 - [`guild hints stats`](#guild-hints-stats) — per-rule fire count, scored count, hit rate, and prune-floor comparison
+- [`guild hooks`](#guild-hooks) — manage harness lifecycle hooks (auto-inject guild context)
+- [`guild hooks diff`](#guild-hooks-diff) — show what 'guild hooks sync' would change (no writes)
+- [`guild hooks install`](#guild-hooks-install) — install guild lifecycle hooks into detected harnesses
+- [`guild hooks list`](#guild-hooks-list) — show all managed hook targets with sync status
+- [`guild hooks scan`](#guild-hooks-scan) — report the hooks currently present in each harness's settings
+- [`guild hooks sync`](#guild-hooks-sync) — regenerate per-harness hook settings from the base config
 - [`guild init`](#guild-init) — scaffold AGENTS.md and register this repo with guild
 - [`guild lore`](#guild-lore) — knowledge lifecycle (read/write/decay/supersede)
-- [`guild lore appraise`](#guild-lore-appraise) — hybrid search (BM25 + recency + title-boost)
+- [`guild lore appraise`](#guild-lore-appraise) — search lexical and semantic evidence candidates
 - [`guild lore archive`](#guild-lore-archive) — write snapshot.json for git-trackable project checkpoint (alias: export)
 - [`guild lore catalog`](#guild-lore-catalog) — bulk-import .md files as lore entries
 - [`guild lore commune`](#guild-lore-commune) — health report for oath bloat and duplicate lore
@@ -67,6 +81,180 @@ Every `guild <verb>` subcommand generated from the live cobra tree.
 - [`guild telemetry`](#guild-telemetry) — telemetry analytics (usage log, token estimates)
 - [`guild telemetry tokens`](#guild-telemetry-tokens) — estimate token cost from usage.log response bytes
 - [`guild version`](#guild-version) — print guild version information
+
+## `guild daemon`
+
+guild daemon subcommands
+
+**Usage**
+
+```
+guild daemon
+```
+
+## `guild daemon install`
+
+install the guild daemon as a login service (launchd agent / systemd user unit)
+
+**Usage**
+
+```
+guild daemon install
+```
+
+Installs the guild daemon as an always-on login service:
+
+  macOS  writes ~/Library/LaunchAgents/com.mathomhaus.guild.daemon.plist
+         and loads it via 'launchctl bootstrap gui/$UID' (falling back to
+         the legacy 'launchctl load -w' on older systems)
+  Linux  writes ~/.config/systemd/user/guild-daemon.service (honoring
+         $XDG_CONFIG_HOME) and runs 'systemctl --user daemon-reload'
+         followed by 'systemctl --user enable --now'
+
+The unit executes this binary's resolved absolute path with 'daemon
+run'; re-run install after moving the binary. A warning (not an error)
+is printed when the resolved path looks transient (temp or go-build
+directory), since the unit would break the next time that directory is
+cleaned.
+
+The service manager owns the daemon process from here: it starts it at
+login and keeps it alive, so 'guild daemon stop' only pauses it until
+the next restart. Use 'guild daemon uninstall' to remove the service
+permanently. The daemon writes its own log to ~/.guild/daemon.log; the
+unit captures no stdout/stderr of its own.
+
+Idempotent: repeat installs re-render the unit file in place and reload
+it, never creating duplicates. When launchctl/systemctl is not on PATH
+the rendered unit and manual load instructions are printed instead and
+the command still succeeds.
+
+## `guild daemon restart`
+
+restart the guild daemon (stop, then start)
+
+**Usage**
+
+```
+guild daemon restart
+```
+
+Restarts the guild daemon: stop (if one is running) followed by start.
+
+The main use is picking up a new binary after an upgrade: a long-lived
+daemon keeps serving the code it started with, and 'guild daemon
+status' nudges when its version drifts from this binary's. Exits 0
+with the new daemon's pid on success.
+
+## `guild daemon run`
+
+run the guild daemon in the foreground (MCP sessions over a unix socket)
+
+**Usage**
+
+```
+guild daemon run
+```
+
+Runs the guild daemon in the foreground until interrupted.
+
+The daemon listens on a unix socket under ~/.guild/ and serves the same
+MCP tool surface as 'guild mcp serve', one session per connection. All
+sessions share a single embedder and a single process writing to the
+guild databases. A discovery file (~/.guild/daemon.json) is written on
+start and removed on exit; SIGINT/SIGTERM stop the daemon cleanly.
+
+Optional: agents work identically without the daemon. It only changes
+how sessions are served, never what they can do.
+
+## `guild daemon start`
+
+start the guild daemon in the background
+
+**Usage**
+
+```
+guild daemon start
+```
+
+Starts the guild daemon as a detached background process.
+
+The daemon is re-executed from this binary as 'guild daemon run' in
+its own session: it survives this command (and the shell) exiting,
+reads from the null device, and writes its log to ~/.guild/daemon.log.
+The log rotates on every start; the previous generation is kept at
+~/.guild/daemon.log.old.
+
+The command waits a few seconds for the daemon to become ready
+(discovery file written, socket accepting), then prints the daemon's
+pid and socket path. Idempotent: when a daemon is already running it
+reports that daemon's pid and exits 0, with a one-line version-drift
+nudge if the running daemon was built from a different version.
+
+## `guild daemon status`
+
+show whether the guild daemon is running
+
+**Usage**
+
+```
+guild daemon status [flags]
+```
+
+Reports the running daemon's pid, version, uptime, active session
+count, and embedder state on one line, with a second nudge line when
+the daemon's version differs from this binary's. --json emits a single
+machine-readable JSON object instead.
+
+Exit status:
+
+  0  a daemon is running
+  1  the status probe failed with an unexpected error
+  3  no daemon is running
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | emit one machine-readable JSON object instead of the human line |
+
+## `guild daemon stop`
+
+stop the running guild daemon
+
+**Usage**
+
+```
+guild daemon stop
+```
+
+Stops the running guild daemon.
+
+Reads the daemon's pid from ~/.guild/daemon.json, sends SIGTERM, and
+waits for the process to exit. A daemon still alive after the grace
+period is killed with SIGKILL. The daemon's socket and discovery file
+are gone on success (removed on its behalf when the daemon could not
+run its own cleanup).
+
+Idempotent: exits 0 both when a daemon was stopped and when none was
+running.
+
+## `guild daemon uninstall`
+
+remove the guild daemon login service
+
+**Usage**
+
+```
+guild daemon uninstall
+```
+
+Removes the login service created by 'guild daemon install': asks the
+service manager to drop the unit ('launchctl bootout' on macOS,
+'systemctl --user disable --now' on Linux) and deletes the unit file.
+
+Idempotent: exits 0 when no unit is installed or the unit was never
+loaded. When launchctl/systemctl is not on PATH the unit file is still
+removed and manual unload instructions are printed.
 
 ## `guild hints`
 
@@ -136,6 +324,177 @@ per-rule fire count, scored count, hit rate, and prune-floor comparison
 guild hints stats
 ```
 
+## `guild hooks`
+
+manage harness lifecycle hooks (auto-inject guild context)
+
+**Usage**
+
+```
+guild hooks
+```
+
+guild hooks: install and maintain harness lifecycle hooks
+
+Lifecycle hooks make guild proactive: the harness runs guild commands
+at session start (prime the brief), before compaction (capture a brief)
+and on each prompt (inject relevant lore) without the agent having to
+remember a tool call.
+
+The shared source of truth is ~/.guild/hooks-base.json (created on
+first install; edit it to override the defaults, then run
+'guild hooks sync'). Per-harness settings files are derived from it by
+adapters and never hand-edited by guild beyond the guild-owned hook
+groups: a hook group is guild-owned only when every command in it
+starts with 'guild'. Everything else in your settings files is
+preserved untouched.
+
+The base config holds guild commands only; a command that does not
+start with 'guild' is rejected when the file is read. Custom hooks
+belong directly in the harness settings file, where sync preserves
+them untouched.
+
+Status vocabulary used by list/diff:
+  in-sync   guild-owned hooks match the base config
+  drift     guild-owned hooks present but differ from the base config
+  missing   no guild-owned hooks (or no settings file) for the harness
+
+## `guild hooks diff`
+
+show what 'guild hooks sync' would change (no writes)
+
+**Usage**
+
+```
+guild hooks diff [flags]
+```
+
+guild hooks diff: preview sync
+
+Compares the guild-owned hooks in each detected harness's settings file
+against the base config and prints the difference: '-' lines are
+guild-owned hooks sync would remove or rewrite, '+' lines are hooks it
+would add. Foreign hooks never appear; sync does not touch them.
+Nothing is written.
+
+Flags:
+  --no-color  plain output without ANSI colors
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--no-color` | bool | `false` | plain output without ANSI colors |
+
+## `guild hooks install`
+
+install guild lifecycle hooks into detected harnesses
+
+**Usage**
+
+```
+guild hooks install [flags]
+```
+
+guild hooks install: first-time hook setup
+
+Detects which harnesses are present on this machine, writes the shared
+base config to ~/.guild/hooks-base.json when missing, and renders it
+into each detected harness's settings file through that harness's
+adapter. Foreign hooks and unrelated settings are preserved untouched;
+re-running on an already-installed harness is a no-op.
+
+Flags:
+  --harness=NAME  only install for one adapter (see 'guild hooks list')
+  --dry-run       report what would be written; write nothing
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--dry-run` | bool | `false` | report what would be written; write nothing |
+| `--harness` | string | `—` | only install for the named harness adapter |
+
+## `guild hooks list`
+
+show all managed hook targets with sync status
+
+**Usage**
+
+```
+guild hooks list [flags]
+```
+
+guild hooks list: managed targets and their state
+
+One row per registered adapter: whether the harness is detected on
+this machine, the settings file the adapter manages, and the sync
+status (in-sync / drift / missing).
+
+Flags:
+  --json  machine-readable output
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | machine-readable output |
+
+## `guild hooks scan`
+
+report the hooks currently present in each harness's settings
+
+**Usage**
+
+```
+guild hooks scan [flags]
+```
+
+guild hooks scan: read-only inventory
+
+Reads each registered adapter's settings file and reports every hook
+found there, guild-owned and foreign alike. Foreign hooks are tagged so
+you can see what else manages this harness. Adapters that validate their
+harness's matcher vocabulary also flag dead matchers: values that parse
+but match none of the documented dispatch values, so the hook group can
+never fire. Nothing is written.
+
+Flags:
+  --verbose  also report harnesses with no hooks installed
+  --json     machine-readable output
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | machine-readable output |
+
+## `guild hooks sync`
+
+regenerate per-harness hook settings from the base config
+
+**Usage**
+
+```
+guild hooks sync [flags]
+```
+
+guild hooks sync: propagate ~/.guild/hooks-base.json
+
+Re-renders the base config into every detected harness's settings file.
+Guild-owned hook groups are replaced in place and missing ones
+appended; foreign and mixed groups are preserved untouched. Idempotent:
+a second run with nothing changed writes nothing.
+
+Flags:
+  --dry-run  report what would change; write nothing
+
+**Flags**
+
+| flag | type | default | description |
+| --- | --- | --- | --- |
+| `--dry-run` | bool | `false` | report what would change; write nothing |
+
 ## `guild init`
 
 scaffold AGENTS.md and register this repo with guild
@@ -178,7 +537,7 @@ guild lore
 
 ## `guild lore appraise`
 
-hybrid search (BM25 + recency + title-boost)
+search lexical and semantic evidence candidates
 
 **Usage**
 
@@ -194,8 +553,11 @@ guild lore appraise QUERY [flags]
 | --- | --- | --- | --- |
 | `--all` | bool | `false` | include archived/superseded entries |
 | `--all-projects` | bool | `true` | search across every project (default) |
+| `--from-stdin-json` | bool | `false` | read the harness hook JSON envelope from stdin and use its .prompt as the query (hook mode) |
+| `--inject` | bool | `false` | hook mode: print a bounded top-3 pointer-cite payload for context injection |
 | `--limit` | int | `10` | max results |
 | `--project`, `-p` | string | `—` | project id (defaults to git toplevel) |
+| `--query` | string | `—` | query text (hook mode alternative to the positional QUERY) |
 | `--since` | string | `—` | only entries created within: Nd\|Nw\|Nm |
 | `--w-fts` | float64 | `0` | override scoring weight for BM25 (0..1) |
 | `--w-recency` | float64 | `0` | override scoring weight for recency (0..1) |
@@ -863,6 +1225,8 @@ Session-end briefing for the next agent. Surfaced by next session's guild_sessio
 
 | flag | type | default | description |
 | --- | --- | --- | --- |
+| `--auto` | bool | `false` | hook mode: print the bounded session-priming payload (oath + last brief + top bounties) to stdout |
+| `--capture` | bool | `false` | with --auto: store the rendered payload as the session brief and print a one-line confirmation |
 | `--json` | bool | `false` | emit structured JSON result instead of formatted text |
 
 ## `guild quest campaign`
@@ -1132,7 +1496,7 @@ search quests by keyword or semantic paraphrase
 guild quest search QUERY... [flags]
 ```
 
-BM25+stopwords full-text search over quest subjects and spec notes. When quest vector coverage >= 90%, adds a semantic arm and RRF-fuses (k=60, same gate and fusion as lore_appraise). Returns up to 10 results. Replaces quest list --all | grep.
+BM25+stopwords full-text search over quest subjects and spec notes. When fresh quest vectors are available, adds a semantic arm and blends rankings while preserving strong results from either arm. Returns up to 10 results. Replaces quest list --all | grep.
 
 **Flags**
 

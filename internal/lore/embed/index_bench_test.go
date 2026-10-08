@@ -109,10 +109,9 @@ func benchTopK(b *testing.B, n, k int) {
 func buildBenchIndex(b *testing.B, n int) *Index {
 	b.Helper()
 	idx := NewIndex(LoreCorpus{}, canonModelID)
-	// Splice requires a loaded index; a zero-row LoadFromDB would need
-	// a live DB. Seed the loaded flag by splicing the first vector
-	// after cosmetically "loading" via an empty Splice path.
-	// Because Splice flips loaded=true on first call, this just works.
+	// This benchmark starts with a known complete empty fixture (epoch0)
+	// rather than a DB-backed load. Every subsequent epoch is spliced here.
+	idx.loaded = true
 	for i := 0; i < n; i++ {
 		v := Quantize(deterministicUnitVec(int64(i + 1)))
 		if err := idx.Splice(int64(i+1), v, int64(i+1)); err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -246,9 +247,10 @@ func TestFTS5_Smoke(t *testing.T) {
 //     (writer_id, seq_no) payload. After the run we SELECT distinct
 //     (writer_id, seq_no) counts to prove no row was overwritten or lost.
 //
-//   - A shared "start" channel releases all goroutines at once so their
-//     INSERTs actually overlap. Without this they'd queue up
-//     sequentially through the test harness.
+//   - A separate connection holds SQLite's write lock while the writers
+//     enter db.ExecContext. All six must occupy pooled connections before
+//     that lock is released. This proves concurrently pending writes without
+//     assuming that SQLite's serialized successful writes overlap in time.
 //
 //   - Runs with t.Parallel() off because we want predictable scheduling
 //     across goroutines here; parallel with other Parallel() tests is fine.
@@ -260,7 +262,8 @@ func TestConcurrentWriters(t *testing.T) {
 		numWrites  = 40
 	)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	db := openTempDB(t)
 
 	// Seed a project row so FK checks on any future writer variant pass.
@@ -282,17 +285,41 @@ func TestConcurrentWriters(t *testing.T) {
 		t.Fatalf("create scratch: %v", err)
 	}
 
+	// Warm enough connections before taking the write lock. Otherwise a
+	// writer could contend during connection initialization, before its
+	// busy_timeout pragma has been applied. Writers still use db.ExecContext
+	// for every insert; only the controller keeps a dedicated connection.
+	db.SetMaxIdleConns(numWriters + 1)
+	var held []*sql.Conn
+	var wg sync.WaitGroup
+	t.Cleanup(func() {
+		cancel()
+		if len(held) > 0 {
+			//nolint:contextcheck // cleanup must release the write lock even after the scenario context expires
+			_, _ = held[0].ExecContext(context.Background(), "ROLLBACK")
+		}
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+		wg.Wait()
+	})
+	for i := 0; i <= numWriters; i++ {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("warm connection %d: %v", i, err)
+		}
+		held = append(held, conn)
+	}
+	blocker := held[0]
+	for _, conn := range held[1:] {
+		_ = conn.Close()
+	}
+	if _, err := blocker.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("hold write lock: %v", err)
+	}
+
 	start := make(chan struct{})
 	errs := make(chan error, numWriters*numWrites)
-
-	// Track per-writer first/last timestamps so the reviewer (and future
-	// debuggers) can confirm that the goroutines' write windows actually
-	// overlap. If any writer's full window precedes another writer's
-	// first insert, the test has regressed to sequential.
-	firsts := make([]time.Time, numWriters)
-	lasts := make([]time.Time, numWriters)
-
-	var wg sync.WaitGroup
 	wg.Add(numWriters)
 	wallStart := time.Now()
 	for w := 0; w < numWriters; w++ {
@@ -300,7 +327,6 @@ func TestConcurrentWriters(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start // wait for the batch starting pistol
-			firsts[writerID] = time.Now()
 			for s := 0; s < numWrites; s++ {
 				payload := fmt.Sprintf("w=%d s=%d ts=%d",
 					writerID, s, time.Now().UnixNano())
@@ -314,35 +340,35 @@ func TestConcurrentWriters(t *testing.T) {
 					return
 				}
 			}
-			lasts[writerID] = time.Now()
 		}()
 	}
 	close(start)
+	// Only the controller and these writers use the pool. With SQLite's
+	// write lock held, all six leased writer connections represent active
+	// write attempts that cannot yet succeed. A fast writer cannot finish
+	// its loop before another writer starts and invalidate this proof.
+	for db.Stats().InUse != numWriters+1 {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("writers did not all enter the database while locked: stats=%+v: %v", db.Stats(), err)
+		}
+		runtime.Gosched()
+	}
+	var beforeRelease int
+	if err := blocker.QueryRowContext(ctx, `SELECT COUNT(*) FROM scratch`).Scan(&beforeRelease); err != nil {
+		t.Fatalf("count while locked: %v", err)
+	}
+	if beforeRelease != 0 {
+		t.Fatalf("%d writes succeeded before the controller released its lock", beforeRelease)
+	}
+	if _, err := blocker.ExecContext(ctx, "COMMIT"); err != nil {
+		t.Fatalf("release write lock: %v", err)
+	}
+	_ = blocker.Close()
 	wg.Wait()
 	wallElapsed := time.Since(wallStart)
 	close(errs)
-
-	// Overlap check: every writer's first insert must occur before at
-	// least one other writer's last insert. In a sequential regression
-	// one writer's window would end before the next writer's begins.
-	overlapCount := 0
-	for i := range firsts {
-		for j := range lasts {
-			if i == j {
-				continue
-			}
-			if firsts[i].Before(lasts[j]) && firsts[j].Before(lasts[i]) {
-				overlapCount++
-				break
-			}
-		}
-	}
-	if overlapCount < numWriters {
-		t.Errorf("only %d/%d writers showed overlapping windows — the test may have degenerated to sequential execution\nfirsts=%v\nlasts=%v",
-			overlapCount, numWriters, firsts, lasts)
-	}
-	t.Logf("concurrent writers: %d goroutines × %d inserts = %d rows in %s (overlap=%d/%d)",
-		numWriters, numWrites, numWriters*numWrites, wallElapsed, overlapCount, numWriters)
+	t.Logf("concurrent writers: %d pending writers, %d inserts each = %d rows in %s",
+		numWriters, numWrites, numWriters*numWrites, wallElapsed)
 
 	for e := range errs {
 		t.Errorf("concurrent write error: %v", e)

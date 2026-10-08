@@ -11,7 +11,7 @@ import (
 )
 
 type AppraiseInput struct {
-	Query       string `json:"query" jsonschema:"search query; BM25+recency+title-boost ranked"`
+	Query       string `json:"query" jsonschema:"search query; ranked lexical and semantic evidence candidates"`
 	QueryFlag   string `json:"query_flag,omitempty" jsonschema:"-"`
 	AllProjects bool   `json:"all_projects,omitempty" jsonschema:"search every project (recommended for research)"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"max results (default 10)"`
@@ -30,7 +30,7 @@ var AppraiseCommand = &command.Command[AppraiseInput, AppraiseCmdOutput]{
 	CLIPath:    []string{"lore", "appraise"},
 	CLIAliases: []string{"check"},
 	Short:      "search lore before researching or inscribing",
-	Long:       "Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary — if current results exist, use them instead of re-deriving.",
+	Long:       "Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary. Results are evidence candidates; verify relevance before using them. Scores are not answer confidence.",
 	Args: []command.ArgSpec{
 		{Name: "query", Kind: command.ArgPositional, Type: command.ArgString, Variadic: true, Help: "search query (remaining positional args joined on CLI)"},
 		{Name: "query_flag", CLIFlagName: "query", Short: "q", Kind: command.ArgFlag, Type: command.ArgString, CLIOnly: true, Help: "search query (alternative to positional form)"},
@@ -127,6 +127,7 @@ func formatAppraiseResult(s lineSink, o AppraiseCmdOutput) string {
 	}
 	var b strings.Builder
 	b.WriteString(s.Line("🔮", "[appraise]", fmt.Sprintf("%d result(s) for %q:", len(out.Results), o.Query)))
+	b.WriteString("  Evidence candidates; answer relevance is unverified.\n")
 	for _, r := range out.Results {
 		e := r.Entry
 		fmt.Fprintf(&b, "  %s [%s/%s · %s · %s]  %s\n",

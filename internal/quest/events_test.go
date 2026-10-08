@@ -24,6 +24,7 @@ func TestEventConstants_Values(t *testing.T) {
 		{"EventDone", EventDone, "done"},
 		{"EventUnblocked", EventUnblocked, "unblocked"},
 		{"EventPMNextCalled", EventPMNextCalled, "pm_next_called"},
+		{"EventReleased", EventReleased, "released"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {

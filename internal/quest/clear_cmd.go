@@ -87,6 +87,12 @@ var FulfillCommand = &command.Command[FulfillInput, FulfillOutput]{
 		if err != nil {
 			return FulfillOutput{}, err
 		}
+		// Activity renewal: a daemon-mediated fulfill on a quest this session
+		// leased refreshes that lease. No-op without a daemon. The lease's
+		// own lifecycle (release on clean shutdown, expiry-driven cleanup) is
+		// independent of the claim being fulfilled; renewing here only keeps
+		// the row from expiring under the holding session before then.
+		renewLeaseActivity(ctx, d, pid, res.Cleared.ID)
 
 		out := FulfillOutput{Result: res}
 

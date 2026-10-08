@@ -64,7 +64,27 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 	committed := false
 	defer rollback(&committed)
 
-	newID, err := nextQuestID(ctx, conn, projectID)
+	result, err := postTx(ctx, conn, projectID, &params, agent, now)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("quest: post: commit: %w", err)
+	}
+	committed = true
+	return result, nil
+}
+
+// postTx runs the full Post write sequence inside an already-open write
+// transaction on tx: monotonic id minting, the task_status insert, the
+// [spec] notes, the blocked-status dependency check, and the `created`
+// event. Extracted from Post so batch posters (e.g. PostRenewals) can
+// compose extra writes (such as dedupe marker notes) into the same
+// transaction. The caller owns BEGIN/COMMIT/ROLLBACK and is responsible
+// for validating params before calling.
+func postTx(ctx context.Context, tx dbTx, projectID string, params *PostParams, agent, now string) (*Quest, error) {
+	newID, err := nextQuestID(ctx, tx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +101,7 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 
 	initialStatus := StatusNext
 	if len(depIDs) > 0 {
-		allDone, err := depsAllDone(ctx, conn, projectID, depIDs)
+		allDone, err := depsAllDone(ctx, tx, projectID, depIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -91,7 +111,7 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 	}
 
 	// Insert task_status row.
-	if _, err := conn.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO task_status (project_id, task_id, status, updated_at)
 		 VALUES (?, ?, ?, ?)`,
 		projectID, newID, string(initialStatus), now,
@@ -111,7 +131,7 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 	if e := strings.TrimSpace(params.Effort); e != "" {
 		scalarParts = append(scalarParts, "effort: "+e)
 	}
-	if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
+	if err := insertSpecNote(ctx, tx, projectID, newID, agent, now,
 		NotePrefixSpec+strings.Join(scalarParts, "; ")); err != nil {
 		return nil, err
 	}
@@ -119,13 +139,13 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 	// List fields — separate note each. files/depends_on comma-join on
 	// one line; acceptance is one note per criterion.
 	if len(params.Files) > 0 {
-		if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
+		if err := insertSpecNote(ctx, tx, projectID, newID, agent, now,
 			NotePrefixSpec+"files: "+joinStrip(params.Files)); err != nil {
 			return nil, err
 		}
 	}
 	if len(depIDs) > 0 {
-		if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
+		if err := insertSpecNote(ctx, tx, projectID, newID, agent, now,
 			NotePrefixSpec+"depends_on: "+strings.Join(depIDs, ", ")); err != nil {
 			return nil, err
 		}
@@ -135,34 +155,25 @@ func Post(ctx context.Context, db *sql.DB, projectID string, params PostParams) 
 		if crit == "" {
 			continue
 		}
-		if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
+		if err := insertSpecNote(ctx, tx, projectID, newID, agent, now,
 			NotePrefixSpec+"acceptance: "+crit); err != nil {
 			return nil, err
 		}
 	}
 	if rework := strings.TrimSpace(params.ReworkOf); rework != "" {
 		rework = strings.ToUpper(rework)
-		if err := insertSpecNote(ctx, conn, projectID, newID, agent, now,
+		if err := insertSpecNote(ctx, tx, projectID, newID, agent, now,
 			NotePrefixRework+rework); err != nil {
 			return nil, err
 		}
 	}
 
 	// `created` event (for scroll/pulse). data = subject.
-	if err := emitEvent(ctx, conn, projectID, newID, EventCreated, agent, params.Subject, now); err != nil {
+	if err := emitEvent(ctx, tx, projectID, newID, EventCreated, agent, params.Subject, now); err != nil {
 		return nil, err
 	}
 
-	result, err := loadTx(ctx, conn, projectID, newID)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return nil, fmt.Errorf("quest: post: commit: %w", err)
-	}
-	committed = true
-	return result, nil
+	return loadTx(ctx, tx, projectID, newID)
 }
 
 // nextQuestID returns "QUEST-<max+1>" where max is the highest numeric
@@ -232,8 +243,9 @@ func depsAllDone(ctx context.Context, tx dbTx, projectID string, depIDs []string
 }
 
 // insertSpecNote writes one row into task_notes with the given
-// pre-assembled note string. Note must already include its "[spec] " /
-// "[spec-replace] " / "[rework] of: " prefix.
+// pre-assembled note string. Note must already include its system
+// prefix ("[spec] ", "[spec-replace] ", "[rework] of: ",
+// "[renewal] entry: ", ...).
 func insertSpecNote(ctx context.Context, tx dbTx, projectID, taskID, agent, createdAt, note string) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO task_notes (project_id, task_id, agent_id, note, created_at)

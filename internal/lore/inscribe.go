@@ -32,6 +32,15 @@ type InscribeParams struct {
 	StrictProject bool      // opt-out of cross-project dedup (default: cross-project)
 	Now           time.Time // injectable for deterministic tests; zero → time.Now().UTC()
 
+	// ValidDaysByKind is the optional per-kind decay window map from
+	// merged config ([inscribe.valid_days]). Consulted only when
+	// ValidDays is nil: a present key wins over the built-in
+	// kindValidDays default (0 means "never stale", stored as NULL); a
+	// nil map or missing key falls back to kindValidDays. Threaded by
+	// callers (via command.Deps.LoreValidDays) because this package does
+	// not import internal/config.
+	ValidDaysByKind map[string]int
+
 	// Embed is the optional embeddings pipeline. When nil or not Enabled,
 	// Inscribe commits the row with vector_state='pending' (the schema
 	// default) and skips every vector-write step. When Enabled, Inscribe
@@ -68,8 +77,11 @@ type DedupHit struct {
 	Title     string
 }
 
-// kindValidDays maps each kind to its default valid_days.
-// nil pointer value = "never expires"; otherwise N days.
+// kindValidDays maps each kind to its built-in default valid_days.
+// nil pointer value = "never expires"; otherwise N days. These values
+// are the zero-config baseline; operators override them per kind via
+// [inscribe.valid_days] in config.toml, which reaches this package as
+// the ValidDaysByKind map consumed by resolveKindValidDays.
 func kindValidDays(kind Kind) *int {
 	switch kind {
 	case KindResearch:
@@ -81,6 +93,23 @@ func kindValidDays(kind Kind) *int {
 	default: // idea, observation, principle — never auto-stale
 		return nil
 	}
+}
+
+// resolveKindValidDays returns the valid_days window stamped onto a new
+// entry of the given kind, consulting the caller-supplied per-kind
+// override map first. A present key wins: 0 means "never stale" and
+// maps to nil, matching the stored-NULL contract. A nil map or missing
+// key falls back to the built-in kindValidDays defaults, keeping
+// zero-config behavior byte-identical.
+func resolveKindValidDays(kind Kind, overrides map[string]int) *int {
+	if v, ok := overrides[string(kind)]; ok {
+		if v <= 0 {
+			return nil
+		}
+		n := v
+		return &n
+	}
+	return kindValidDays(kind)
 }
 
 // ErrInvalidKind is returned by Inscribe/Update when the caller supplies a
@@ -141,8 +170,9 @@ func isValidKind(k Kind) bool {
 //     BloatWarned=true but still inserts unless NoWarn is set, in which
 //     case the check is skipped entirely.
 //  4. Single-row INSERT with kind-appropriate defaults (status=seed for
-//     kind=idea, else status=current; valid_days from kindValidDays when
-//     caller didn't override).
+//     kind=idea, else status=current; valid_days resolved from
+//     ValidDaysByKind with kindValidDays as fallback when the caller
+//     didn't override).
 //
 // The caller owns presentation: emoji lines, warning output, dedup hit
 // formatting. Inscribe's responsibility ends at "row inserted; here's
@@ -194,7 +224,7 @@ func Inscribe(ctx context.Context, db *sql.DB, p *InscribeParams) (*InscribeResu
 
 	validDays := p.ValidDays
 	if validDays == nil {
-		validDays = kindValidDays(p.Kind)
+		validDays = resolveKindValidDays(p.Kind, p.ValidDaysByKind)
 	}
 
 	tags := strings.Join(p.Tags, ",")

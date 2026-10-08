@@ -1,0 +1,125 @@
+=== guild init --yes
+  guild init — /home/guild/e2eproj (project: e2eproj)
+  
+  Will perform:
+    [✓] register "e2eproj" in ~/.guild/ databases
+    [?] AGENTS.md — not found → create
+    [?] register guild MCP — no host detected; see `guild mcp install` for options
+  
+  🔧 applied lore schema migration 1 (init)...
+  🔧 applied lore schema migration 2 (thin citation hint)...
+  🔧 applied lore schema migration 3 (embeddings schema)...
+  🔧 applied lore schema migration 4 (fts5 stopword tokenizer)...
+  🔧 applied lore schema migration 5 (quest search)...
+  🔧 applied lore schema migration 6 (backfill tasks fts rows)...
+  🔧 applied lore schema migration 7 (task notes task id index)...
+  🔧 applied lore schema migration 8 (drop principle too long hint)...
+  🔧 applied lore schema migration 9 (sleep journal)...
+  🔧 applied lore schema migration 10 (staleness signals)...
+  🔧 applied lore schema migration 11 (task leases)...
+  🔧 applied lore schema migration 12 (lore body)...
+  🔧 applied lore schema migration 13 (reconcile sleep journal)...
+  🔧 applied lore schema migration 14 (quest search project identity)...
+  🔧 applied quest schema migration 1 (init)...
+  🔧 applied quest schema migration 2 (thin citation hint)...
+  🔧 applied quest schema migration 3 (embeddings schema)...
+  🔧 applied quest schema migration 4 (fts5 stopword tokenizer)...
+  🔧 applied quest schema migration 5 (quest search)...
+  🔧 applied quest schema migration 6 (backfill tasks fts rows)...
+  🔧 applied quest schema migration 7 (task notes task id index)...
+  🔧 applied quest schema migration 8 (drop principle too long hint)...
+  🔧 applied quest schema migration 9 (sleep journal)...
+  🔧 applied quest schema migration 10 (staleness signals)...
+  🔧 applied quest schema migration 11 (task leases)...
+  🔧 applied quest schema migration 12 (lore body)...
+  🔧 applied quest schema migration 13 (reconcile sleep journal)...
+  🔧 applied quest schema migration 14 (quest search project identity)...
+    ✓ registered "e2eproj" in lore + quest
+    ✓ embedder enabled (cosine=<COSINE>, extract=<DUR>, probe=<DUR>)
+    ✓ embedder backfill: 0 pending (up to date)
+    ✓ created AGENTS.md
+  
+    [i] no MCP client detected — see `guild mcp install` for manual setup
+  
+  Next: open this repo in your AI agent — it will read AGENTS.md and bootstrap guild on first use.
+=== initialize
+  serverInfo: guild <VERSION>
+  protocolVersion: <DATE>
+  instructions: 17107 bytes, sha256:8248295e193d5defa541e5c91e029bd54e2eccc93e04077981cb43d88f08a543
+=== tools/list (43 tools)
+  guild_session_start
+  guild_set_project
+  guild_status
+  lore_appraise
+  lore_catalog
+  lore_commune
+  lore_coverage_reconcile
+  lore_dossier
+  lore_echoes
+  lore_embed_rebuild
+  lore_health
+  lore_inquest
+  lore_inscribe
+  lore_link
+  lore_list
+  lore_meld
+  lore_oath
+  lore_reforge
+  lore_ripples
+  lore_seal
+  lore_study
+  lore_unlink
+  lore_update
+  lore_whispers
+  quest_accept
+  quest_active
+  quest_bounties
+  quest_brief
+  quest_campfire
+  quest_clear
+  quest_epic
+  quest_forfeit
+  quest_fulfill
+  quest_guild
+  quest_journal
+  quest_list
+  quest_orders
+  quest_post
+  quest_pulse
+  quest_scroll
+  quest_search
+  quest_summon
+  quest_update
+=== tools/call guild_session_start {"project":"e2eproj"}
+  📍 active project: e2eproj
+  📊 board: 0 oaths, 0 bounties, 0 echoes
+  
+  📋 last briefing: (none yet) — call quest_brief before session end to leave a note for the next agent.
+  
+  ⚔️ oath: (none yet) — inscribe principles with kind="principle" and they auto-load here.
+  
+  👻 fading echoes: (none) — stale research/decision entries surface here as they age out.
+  
+  🎯 bounties: ✅ no unclaimed tasks — all done, blocked, or in progress.
+  
+  
+  ⚡ parallelism: (none available) — additional unclaimed quests with no file overlap and no dep conflict will surface here.
+=== tools/call lore_inscribe
+  📜 inscribed LORE-1: cobalt heron drydock survey [research]
+  ℹ️ [fyi] no lore_appraise in the last 5 calls — consider appraise(query="…", all_projects=true) before inscribing to avoid duplicates
+=== tools/call lore_appraise
+  🔮 1 result(s) for "cobalt heron drydock":
+    Evidence candidates; answer relevance is unverified.
+    LORE-1 [e2eproj/research · current · <AGE> ago]  cobalt heron drydock survey
+    Baseline e2e entry proving the MCP write path end to end.
+=== tools/call quest_post
+  ➕ posted QUEST-1: wire the drydock beacon relay
+=== tools/call quest_accept
+  ⚔️ accepted QUEST-1: wire the drydock beacon relay
+    status=in_progress · priority=P1 · owner=agent
+    acceptance:
+      - beacon relay answers a ping from the harness
+    next useful lore call: lore_appraise(query="wire the drydock beacon relay", all_projects=True)
+=== tools/call quest_fulfill
+  🏆 fulfilled QUEST-1
+  💡 [hint] no quest_brief yet this session — consider quest_brief("what was done, what's next") before compact

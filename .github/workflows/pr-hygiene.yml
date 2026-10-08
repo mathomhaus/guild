@@ -36,11 +36,15 @@ jobs:
             install
             hints
             ci
+            e2e
             release
             docs
             readme
             deps
             issues
+            daemon
+            sleep
+            hooks
           requireScope: false
           subjectPattern: ^[^A-Z].+$
           subjectPatternError: |
@@ -50,6 +54,9 @@ jobs:
 
   size-label:
     name: size label
+    # Fork PR tokens are intentionally read-only. Informational size
+    # labeling only runs for same-repository pull requests.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: codelytv/pr-size-labeler@v1

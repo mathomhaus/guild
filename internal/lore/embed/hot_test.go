@@ -79,7 +79,7 @@ func TestWriteVector_HappyPath(t *testing.T) {
 		Embedder: NewDeterministicEmbedder(),
 		ModelID:  "bge-small-en-v1.5-int8-cls",
 	}
-	res, err := WriteVector(ctx, db, deps, entryID, "the summary text to embed")
+	res, err := WriteVector(ctx, db, deps, entryID, "unit test summary for WriteVector round trip verification")
 	if err != nil {
 		t.Fatalf("WriteVector: %v", err)
 	}
@@ -121,12 +121,12 @@ func TestWriteVector_HappyPath(t *testing.T) {
 	}
 }
 
-// TestWriteVector_InsertOrIgnoreNoDoubleBump verifies that a second
+// TestWriteVector_ReplacementDoesNotInflateCoverage verifies that a second
 // WriteVector against the same entry does NOT double-bump the
 // coverage counter. INSERT OR IGNORE collapses the row, and our
 // conditional counter bump only fires on a real insert. The epoch
 // still advances so other readers refresh.
-func TestWriteVector_InsertOrIgnoreNoDoubleBump(t *testing.T) {
+func TestWriteVector_ReplacementDoesNotInflateCoverage(t *testing.T) {
 	ctx := context.Background()
 	db, entryID := hotTestDB(t)
 
@@ -134,8 +134,14 @@ func TestWriteVector_InsertOrIgnoreNoDoubleBump(t *testing.T) {
 		Embedder: NewDeterministicEmbedder(),
 		ModelID:  "bge-small-en-v1.5-int8-cls",
 	}
+	if _, err := db.Exec(`UPDATE entries SET summary='first' WHERE id=?`, entryID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := WriteVector(ctx, db, deps, entryID, "first"); err != nil {
 		t.Fatalf("first WriteVector: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE entries SET summary='second' WHERE id=?`, entryID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := WriteVector(ctx, db, deps, entryID, "second"); err != nil {
 		t.Fatalf("second WriteVector: %v", err)
@@ -220,7 +226,7 @@ func TestWriteVector_SplicesIntoIndex(t *testing.T) {
 		Index:    idx,
 		ModelID:  modelID,
 	}
-	if _, err := WriteVector(ctx, db, deps, entryID, "summary-for-splice-test"); err != nil {
+	if _, err := WriteVector(ctx, db, deps, entryID, "unit test summary for WriteVector round trip verification"); err != nil {
 		t.Fatalf("WriteVector: %v", err)
 	}
 	post := idx.Len()

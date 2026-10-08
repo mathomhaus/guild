@@ -17,13 +17,13 @@ import (
 // same Embedder and ModelID as the lore side.
 //
 // Lifecycle:
-//   - Created once per server rebuild in Register(). Stored in
-//     currentQuestEmbedProvider so buildMCPCommandDeps can wire it into
+//   - Created once per provider bundle in NewProviders. Stored in
+//     Providers.questEmbed so buildMCPCommandDeps can wire it into
 //     command.Deps.Embed.
 //   - ResolveQuestEmbedDeps is called at the top of every quest_search handler
 //     entry. On the common path (state unchanged since last resolve) it is one
-//     indexed meta SELECT plus an RLock. On a state transition it upgrades to a
-//     write lock, reconstructs *QuestEmbedDeps, caches, and logs once.
+//     indexed meta SELECT plus an RLock. State transitions and enabled-state
+//     retries serialize construction before caching *QuestEmbedDeps.
 //
 // State tracking: reads quest.embedder_state and quest.embedder_model_id from
 // quest.db (the QuestCorpus MetaKey values). These are the same keys
@@ -33,6 +33,13 @@ import (
 // this type. The interface questEmbedResolver in quest/search_cmd.go is the
 // declared port; questEmbedProvider satisfies it by name-matching.
 type questEmbedProvider struct {
+	// resolveMu permits only one constructor at a time. Cache reads remain
+	// independent of slow extraction, probing, or index loading.
+	resolveMu sync.Mutex
+	// retryAfter bounds enabled-state retries after a transient nil result.
+	// Disabled-state nil results remain cached until metadata changes.
+	retryAfter time.Time
+
 	mu          sync.RWMutex
 	cached      *quest.QuestEmbedDeps
 	lastState   string
@@ -68,7 +75,8 @@ func newQuestEmbedProvider(
 
 // ResolveQuestEmbedDeps returns the current *quest.QuestEmbedDeps,
 // reconstructing when meta.quest.embedder_state or quest.embedder_model_id
-// change. A nil return is the BM25-only fallback path; quest_search tolerates it.
+// change or a failed enabled initialization reaches its retry deadline. A nil
+// return is the BM25-only fallback path; quest_search tolerates it.
 //
 // This method satisfies the questEmbedResolver interface declared in
 // internal/quest/search_cmd.go. Naming is intentional: the quest package
@@ -91,20 +99,34 @@ func (p *questEmbedProvider) ResolveQuestEmbedDeps(ctx context.Context) *quest.Q
 		return p.cached
 	}
 
-	// Hot path: state unchanged since last resolve.
-	p.mu.RLock()
-	if p.lastState == state && p.lastModelID == modelID && p.lastState != "" {
-		cached := p.cached
-		p.mu.RUnlock()
+	if cached, ok := p.cachedForState(state, modelID); ok {
 		return cached
 	}
-	priorState := p.lastState
-	p.mu.RUnlock()
 
-	// Slow path: state changed or first resolve. Reconstruct outside the lock.
+	p.resolveMu.Lock()
+	defer p.resolveMu.Unlock()
+	// A constructor may have finished, or metadata may have changed, while
+	// this caller waited. Refresh both before deciding whether to build.
+	refreshCtx, refreshCancel := context.WithTimeout(ctx, 2*time.Second)
+	state, modelID, err = p.readMetaState(refreshCtx)
+	refreshCancel()
+	if err != nil {
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.cached
+	}
+	if cached, ok := p.cachedForState(state, modelID); ok {
+		return cached
+	}
+	p.mu.RLock()
+	priorState, priorModel := p.lastState, p.lastModelID
+	p.mu.RUnlock()
 	reason := "initial_boot_enabled"
 	if priorState != "" {
 		reason = "state_flip_mid_session"
+		if priorState == state && priorModel == modelID {
+			reason = "retry_after_init_failure"
+		}
 	}
 	newDeps := p.reconstruct(ctx, reason)
 
@@ -112,9 +134,24 @@ func (p *questEmbedProvider) ResolveQuestEmbedDeps(ctx context.Context) *quest.Q
 	p.cached = newDeps
 	p.lastState = state
 	p.lastModelID = modelID
+	p.retryAfter = time.Time{}
+	if newDeps == nil && state == "enabled" {
+		p.retryAfter = time.Now().Add(embedInitRetryDelay)
+	}
 	p.mu.Unlock()
-
 	return newDeps
+}
+
+// cachedForState retains successes and explicit disables, but lets a failed
+// enabled initialization recover without requiring a metadata flip or restart.
+func (p *questEmbedProvider) cachedForState(state, modelID string) (*quest.QuestEmbedDeps, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.lastState != "" && p.lastState == state && p.lastModelID == modelID &&
+		(p.cached != nil || state != "enabled" || time.Now().Before(p.retryAfter)) {
+		return p.cached, true
+	}
+	return nil, false
 }
 
 // reconstruct builds a *quest.QuestEmbedDeps by borrowing the embedder from

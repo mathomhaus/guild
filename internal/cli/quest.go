@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,37 +150,13 @@ func init() {
 	questCmd.AddCommand(
 		questInitCmd,
 	)
-	// Registry-generated verbs. Each BindCobra call produces the
-	// cobra.Command from the co-located spec (internal/quest/*_cmd.go)
-	// and attaches it under questCmd. wrapTelemetry restores per-call
-	// usage-log recording that the registry adapter doesn't do (surface
-	// concern, not verb concern). See docs/architecture/COMMAND_REGISTRY.md.
-	deps := buildCLICommandDeps()
-	bindRegistryVerb(questCmd, quest.AcceptCommand, deps, "quest accept")
-	bindRegistryVerb(questCmd, quest.FulfillCommand, deps, "quest fulfill")
-	bindRegistryVerb(questCmd, quest.ForfeitCommand, deps, "quest forfeit")
-	bindRegistryVerb(questCmd, quest.JournalCommand, deps, "quest journal")
-	bindRegistryVerb(questCmd, quest.BriefCommand, deps, "quest brief")
-	bindRegistryVerb(questCmd, quest.ActiveCommand, deps, "quest active")
-	bindRegistryVerb(questCmd, quest.SummonCommand, deps, "quest summon")
-	bindRegistryVerb(questCmd, quest.OrdersCommand, deps, "quest orders")
-	bindRegistryVerb(questCmd, quest.CampfireCommand, deps, "quest campfire")
-	bindRegistryVerb(questCmd, quest.EpicCommand, deps, "quest campaign")
-	bindRegistryVerb(questCmd, quest.PostCommand, deps, "quest post")
-	bindRegistryVerb(questCmd, quest.UpdateCommand, deps, "quest update")
-	bindRegistryVerb(questCmd, quest.ScrollCommand, deps, "quest scroll")
-	bindRegistryVerb(questCmd, quest.ListCommand, deps, "quest list")
-	bindRegistryVerb(questCmd, quest.GuildCommand, deps, "quest guild")
-	bindRegistryVerb(questCmd, quest.PulseCommand, deps, "quest pulse")
-	bindRegistryVerb(questCmd, quest.SearchCommand, deps, "quest search")
-}
-
-// bindRegistryVerb attaches a Command registry spec to parent and wraps
-// its RunE with telemetry. Helper collapses three lines per verb into
-// one so the init() stays scannable as the migration grows.
-func bindRegistryVerb[I, O any](parent *cobra.Command, spec *command.Command[I, O], deps command.Deps, telemetryLabel string) {
-	spec.BindCobra(parent, deps)
-	wrapTelemetry(parent, spec.CLIPath[len(spec.CLIPath)-1], telemetryLabel)
+	// Registry-generated quest verbs are bound by the module-registry loop
+	// (bindModuleVerbs in modules.go), called from the package's final
+	// init() so questCmd's persistent flags above are already set and each
+	// verb inherits -p rather than declaring a colliding local one.
+	// wrapTelemetry restores per-call usage-log recording that the registry
+	// adapter doesn't do (surface concern, not verb concern). See
+	// docs/architecture/COMMAND_REGISTRY.md.
 }
 
 // wrapTelemetry decorates the named subcommand's RunE with a telemetry
@@ -219,13 +196,17 @@ func wrapTelemetry(parent *cobra.Command, name, subcmd string) {
 // buildCLICommandDeps constructs the Deps bundle for CLI-side command
 // registry adapters. Consolidates DB open + project resolution behind
 // the surface-neutral Deps shape so Handlers stay ignorant of cobra.
-// Embed is wired via wireQuestEmbedDeps so `guild quest search` reaches
-// the RRF arm when quest corpus coverage is at or above 0.90 (QUEST-259).
-// The per-process Index build cost (~50-200 ms for a ~250-quest corpus)
-// is accepted for the CLI surface: the maintainer decided CLI parity
-// with MCP is worth the startup overhead.
+//
+// ExecRemote routes the Handler through a live, version-matched guild
+// daemon when one is up (ADR-005 single writer); every transport
+// failure falls back to the local Handler, so daemon-down behavior is
+// unchanged. Embed defers wireQuestEmbedDeps to first LOCAL Handler use
+// via cliQuestEmbedSource: `guild quest search` still reaches the RRF
+// arm at quest corpus coverage >= 0.90 (QUEST-259) with the accepted
+// ~50-200 ms wiring cost, but a daemon-routed search skips it; the
+// daemon's shared embedder serves instead.
 func buildCLICommandDeps() command.Deps {
-	d := command.Deps{
+	return command.Deps{
 		OpenDB: openQuestDB,
 		ResolveProj: func(ctx context.Context, argProject string) (string, error) {
 			db, err := openQuestDB(ctx)
@@ -235,20 +216,18 @@ func buildCLICommandDeps() command.Deps {
 			defer func() { _ = db.Close() }()
 			p, err := project.Resolve(ctx, db, strings.TrimSpace(argProject))
 			if err != nil {
-				return "", err
+				return "", wrapResolveHint(err)
 			}
 			return p.ID, nil
 		},
 		Now:        time.Now,
 		OpenLoreDB: openLoreDB,
+		// quest post --spec inscribes a kind=decision lore entry, so the
+		// quest surface needs the configured decay windows too.
+		LoreValidDays: cliLoreValidDays,
+		ExecRemote:    remoteExecViaDaemon,
+		Embed:         &cliQuestEmbedSource{},
 	}
-	// command.Deps.Embed is `any`; assigning a typed-nil pointer would
-	// produce a non-nil interface value and defeat questEmbedFromDeps's
-	// nil guard. Assign only when wiring yielded a real *QuestEmbedDeps.
-	if e := wireQuestEmbedDeps(); e != nil {
-		d.Embed = e
-	}
-	return d
 }
 
 // wireQuestEmbedDeps builds a *quest.QuestEmbedDeps for the CLI surface.
@@ -312,6 +291,22 @@ func wireQuestEmbedDeps() *quest.QuestEmbedDeps {
 }
 
 // --- shared helpers ---
+
+// wrapResolveHint attaches an agent-facing recovery hint to project
+// resolution failures. Human-mode output is byte identical (WithHint
+// preserves Error()); the hint only surfaces in the agent-mode JSON
+// envelope. ErrNotInGitRepo is included for completeness even though
+// project.Resolve currently rewraps it without %w.
+func wrapResolveHint(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, project.ErrNotRegistered) || errors.Is(err, project.ErrNotInGitRepo) {
+		return command.WithHint(err,
+			"run 'guild init' from the project root, or pass --project <name> for a registered project")
+	}
+	return err
+}
 
 func loadCfg(cmd *cobra.Command) (*config.Config, error) {
 	return config.Load(cmd.Flags())

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/mathomhaus/guild/internal/command"
-	"github.com/mathomhaus/guild/internal/session"
 )
 
 // guildProjectEnv is the env var checked as the last-ditch fallback in
@@ -18,14 +17,15 @@ const guildProjectEnv = "GUILD_PROJECT"
 
 // resolveProject is the shared entry point every non-bootstrap tool
 // handler uses to figure out which project it operates on. Threads ctx
-// through session.ResolveForMCP so a canceled tool call propagates into
-// the file IO.
+// through the core's SessionStore so a canceled tool call propagates
+// into the file IO, and so each server instance resolves against its
+// own session identity rather than a process-global one.
 //
 // Returns the resolved project id and nil on success, or ("", err) with
 // a pre-formatted [error] message ready to become the tool's isError
 // payload. Callers typically:
 //
-//	pid, err := resolveProject(ctx, in.Project)
+//	pid, err := c.resolveProject(ctx, in.Project)
 //	if err != nil {
 //	    return toolErrorf("%s", err), nil, nil
 //	}
@@ -33,16 +33,17 @@ const guildProjectEnv = "GUILD_PROJECT"
 // "explicit arg" covers the `project` field many tools expose for cases
 // where the agent wants to override the active project without a
 // separate guild_set_project call.
-func resolveProject(ctx context.Context, argProject string) (string, error) {
-	return session.ResolveForMCP(ctx, strings.TrimSpace(argProject), os.Getenv(guildProjectEnv))
+func (c *serverCore) resolveProject(ctx context.Context, argProject string) (string, error) {
+	return c.sessions.ResolveForMCP(ctx, strings.TrimSpace(argProject), os.Getenv(guildProjectEnv))
 }
 
 // resolveProjectAutoBootstrap wraps resolveProject with implicit auto-bootstrap:
 // when no active project is set AND the argProject is empty, it attempts to
 // infer the project from cwd via inferProjectFromCWD. On a clean resolution,
-// it calls session.SetActiveProject silently and writes a narration line into
-// the narration pointer stored in ctx (placed there by the MCP handler wrapper
-// via WithNarrationPtr). The tool then proceeds normally.
+// it persists the project through the core's SessionStore silently and writes
+// a narration line into the narration pointer stored in ctx (placed there by
+// the MCP handler wrapper via WithNarrationPtr). The tool then proceeds
+// normally.
 //
 // Error-shape matrix (per ENTRY-25):
 //  1. cwd not in a git repo          → unchanged "call guild_session_start" error
@@ -55,8 +56,8 @@ func resolveProject(ctx context.Context, argProject string) (string, error) {
 // Telemetry: auto-bootstrap firings are logged at slog.Debug level with
 // project id so we can measure reconnect frequency. Usage.log wiring is
 // deferred (QUEST-54 extension) — slog.Debug is sufficient for now.
-func resolveProjectAutoBootstrap(ctx context.Context, argProject string) (string, error) {
-	pid, err := session.ResolveForMCP(ctx, strings.TrimSpace(argProject), os.Getenv(guildProjectEnv))
+func (c *serverCore) resolveProjectAutoBootstrap(ctx context.Context, argProject string) (string, error) {
+	pid, err := c.sessions.ResolveForMCP(ctx, strings.TrimSpace(argProject), os.Getenv(guildProjectEnv))
 	if err == nil {
 		// Fast path: project already set or explicit arg given.
 		return pid, nil
@@ -78,11 +79,13 @@ func resolveProjectAutoBootstrap(ctx context.Context, argProject string) (string
 	//   - ErrNotInGitRepo → "not inside a git repository"
 	//   - ErrNotRegistered → "project X not registered — run 'guild init'"
 	//
-	// inferProjectFromCWD returns (projectID, viaWorktreeFallback, err) per
-	// QUEST-67. The fallback flag signals the resolver used the worktree's
-	// main-repo path — we surface it in the narration so the agent+user see
-	// how the project was reached.
-	inferred, viaWorktreeFallback, inferErr := inferProjectFromCWD(ctx)
+	// inferProject returns (projectID, viaWorktreeFallback, err) per
+	// QUEST-67, anchored on this server's connection cwd (process cwd on
+	// the stdio path, shim preamble cwd on the daemon path). The fallback
+	// flag signals the resolver used the worktree's main-repo path; we
+	// surface it in the narration so the agent+user see how the project
+	// was reached.
+	inferred, viaWorktreeFallback, inferErr := c.inferProject(ctx)
 	if inferErr != nil {
 		// Auto-inference failed; return the original "no active project" error
 		// so the agent gets the standard bootstrap guidance, not a confusing
@@ -90,9 +93,9 @@ func resolveProjectAutoBootstrap(ctx context.Context, argProject string) (string
 		return "", err
 	}
 
-	// Persist the inferred project for this PID so subsequent tool calls
-	// in the same session don't need to re-infer.
-	if setErr := session.SetActiveProject(ctx, inferred); setErr != nil {
+	// Persist the inferred project for this session identity so subsequent
+	// tool calls in the same session don't need to re-infer.
+	if setErr := c.sessions.SetActiveProject(ctx, inferred); setErr != nil {
 		// Persist failure is rare (unwritable home dir). Fall through to
 		// success anyway — the tool should still work this call even if
 		// we couldn't cache the result.

@@ -32,6 +32,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -249,4 +250,61 @@ func cosine(a, b []float32) float64 {
 		return 0
 	}
 	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+}
+
+// A controlled tail-detail probe isolates the 512-token representation limit.
+// Equal input tensors cannot distinguish summaries that differ only past the
+// window; parity alone therefore does not establish retrieval adequacy.
+func TestTailDetailTruncation(t *testing.T) {
+	vocab := testVocabPath()
+	if vocab == "" {
+		t.Skip("tail-token probe NOT validated: GUILD_EMBED_TEST_VOCAB unavailable")
+	}
+	v, err := LoadVocab(vocab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := NewWordPieceTokenizer(v)
+	prefix := strings.Repeat("The service reads cached records and records latency for each request. ", 70)
+	a := prefix + "The backup is encrypted with AES256 before upload."
+	b := prefix + "The backup uses Zstandard compression before upload."
+	ai, am, at := tk.Encode(a, 512)
+	bi, bm, bt := tk.Encode(b, 512)
+	if !equalInt64(ai, bi) || !equalInt64(am, bm) || !equalInt64(at, bt) {
+		t.Fatal("tail probe no longer isolates truncation")
+	}
+	short, _, _ := tk.Encode("The backup is encrypted with AES256 before upload.", 512)
+	if equalInt64(ai, short) {
+		t.Fatal("controlled probe did not change representation")
+	}
+	if testLibPath() == "" || testModelPath() == "" {
+		t.Log("token truncation established; real embedding probe skipped (runtime/model unavailable)")
+		return
+	}
+	emb, err := NewBGEEmbedder(RuntimeConfig{LibraryPath: testLibPath(), ModelPath: testModelPath(), VocabPath: vocab, NumThreads: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer emb.Close()
+	ctx := context.Background()
+	av, err := emb.Embed(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bv, err := emb.Embed(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sim := cosine(av, bv); sim < 0.99999 {
+		t.Fatalf("equal input tensors unexpectedly differ: cosine=%g", sim)
+	}
+	qv, err := emb.Embed(ctx, "How is the stored backup encrypted?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	focused, err := emb.Embed(ctx, "The backup is encrypted with AES256 before upload.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("controlled tail query: truncated similarity=%.6f, focused detail similarity=%.6f; equal-prefix document vectors are indistinguishable", cosine(qv, av), cosine(qv, focused))
 }

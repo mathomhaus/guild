@@ -1,34 +1,7 @@
-// QuestCorpus is the VectorCorpus adapter for the quest tasks schema.
-// Maps every port accessor to the schema shipped in migration 005 plus
-// the data backfill in migration 006: vectors in quest_vectors, entities
-// in tasks_fts_rows (integer-ID bridge, one row per distinct
-// task_status.task_id post-006), body column carries concatenated spec
-// notes for embedding.
-//
-// Migration 006 (QUEST-246, LORE-404) is the load-bearing piece: it
-// backfills tasks_fts_rows from every distinct task_status.task_id and
-// reconstitutes body from each quest's [spec] task_notes. Before 006,
-// only quests posted after migration 005 applied were bridged (the
-// tasks_fts_status_ai trigger fires on INSERT only and never ran against
-// historical rows), so on upgrading installs tasks_fts_rows held a tiny
-// fraction of real quests and embeddings silently skipped 96% of the
-// corpus. Post-006, COUNT(*) FROM tasks_fts_rows equals COUNT(DISTINCT
-// task_id) FROM task_status, and QuestCorpus's effective entity surface
-// matches the canonical quest store.
-//
-// MetaKey returns 'quest.'-prefixed keys so two corpora sharing a
-// single meta table never collide on rows (lore owns the unprefixed
-// set; quest owns 'quest.*'). This is the prefix-isolation contract
-// documented in corpus.go.
-//
-// No VectorStateColumn: tasks_fts_rows has no vector_state column.
-// The embed algorithms skip the per-entity state flip and the state
-// predicate in scans when VectorStateColumn() returns the empty string.
-//
-// ActivePredicate: all bridge rows are eligible for embedding (no
-// archive/park lifecycle on quests today). Returns "id IS NOT NULL"
-// which the algorithms accept as a pass-through WHERE fragment after
-// prefixing the table alias.
+// QuestCorpus adapts the project-qualified quest search bridge. Migration
+// 014 rebuilds historical bridge text from canonical, project-scoped notes
+// and invalidates vectors whose old task-only identity could mix projects.
+// Completed quests remain eligible for retrieval and embedding.
 
 package embed
 
@@ -61,41 +34,40 @@ func (QuestCorpus) EntityIDColumn() string { return "id" }
 // state predicate when the returned string is empty.
 func (QuestCorpus) VectorStateColumn() string { return "" }
 
-// ActivePredicate matches all bridge rows. Quest tasks have no
-// archive/park lifecycle column today; every row is embed-eligible.
-// Returns "id IS NOT NULL" rather than "1=1" because the algorithms
-// prepend the table alias ("e.") to this string, producing "e.id IS
-// NOT NULL" which is a valid tautological predicate for any row.
-func (QuestCorpus) ActivePredicate() string { return "id IS NOT NULL" }
+// ActivePredicate includes every quest with searchable spec text, including
+// completed quests. Empty bodies have nothing to embed.
+func (QuestCorpus) ActivePredicate() string { return "body != ''" }
 
-// SourceText reads the searchable text for one entity (bridge row).
-// Joins tasks_fts_rows.id -> task_id -> task_notes to assemble all
-// [spec] notes for the quest. Returns sql.ErrNoRows when the bridge
-// row is gone (deleted mid-backfill) so callers can distinguish that
-// from a genuine IO error.
-func (QuestCorpus) SourceText(ctx context.Context, db *sql.DB, entityID int64) (string, error) {
-	var taskID string
-	if err := db.QueryRowContext(ctx,
-		`SELECT task_id FROM tasks_fts_rows WHERE id = ?`, entityID,
-	).Scan(&taskID); err != nil {
-		return "", err
-	}
-	return QuestSourceText(ctx, db, taskID)
+// SourceTextQuery is shared by reads and transaction-scoped freshness checks.
+// The bridge body is the ordered, project-scoped spec text maintained by triggers.
+func (QuestCorpus) SourceTextQuery() string {
+	return `SELECT body FROM tasks_fts_rows WHERE id = ? AND body != ''`
+}
+
+// SourceTextColumn supports batched coverage reads of the canonical text.
+func (QuestCorpus) SourceTextColumn() string { return "body" }
+
+// SourceText reads the ordered spec text maintained by project-scoped triggers.
+// Missing or empty bridge rows return sql.ErrNoRows.
+func (c QuestCorpus) SourceText(ctx context.Context, db *sql.DB, entityID int64) (string, error) {
+	var text string
+	err := db.QueryRowContext(ctx, c.SourceTextQuery(), entityID).Scan(&text)
+	return text, err
 }
 
 // QuestSourceText assembles the embeddable text for a quest identified
-// by its string task_id. Concatenates all [spec] notes in insertion
-// order, separated by newlines. Exported so search_cmd.go can call it
-// without importing from an inner package.
+// by its project_id and string task_id. Concatenates spec and spec-replace
+// notes in insertion order, separated by newlines. This canonical notes read
+// uses exactly the same text convention as the derived bridge body.
 //
-// Returns ("", sql.ErrNoRows) when the task_id has no [spec] notes
+// Returns ("", sql.ErrNoRows) when the project-qualified task has no spec notes
 // (either does not exist or was just created with no notes yet).
-func QuestSourceText(ctx context.Context, db *sql.DB, taskID string) (string, error) {
+func QuestSourceText(ctx context.Context, db *sql.DB, projectID, taskID string) (string, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT note FROM task_notes
-		 WHERE task_id = ? AND note LIKE '[spec]%'
+		 WHERE project_id = ? AND task_id = ? AND (note LIKE '[spec]%' OR note LIKE '[spec-replace]%')
 		 ORDER BY id`,
-		taskID,
+		projectID, taskID,
 	)
 	if err != nil {
 		return "", err

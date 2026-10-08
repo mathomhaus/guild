@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mathomhaus/guild/internal/command"
@@ -76,6 +77,21 @@ var AcceptCommand = &command.Command[AcceptInput, AcceptOutput]{
 		q, err := Accept(ctx, db, pid, in.QuestID, in.Owner)
 		if err != nil {
 			return AcceptOutput{}, err
+		}
+		// Daemon-mediated accepts acquire a lease so a crashed agent's
+		// claim can later be reaped (ADR-005 Part 1, daemon Phase 3).
+		// The seam is nil without a daemon: no lease row, byte-identical
+		// to today. Best-effort, same invariant as the trail writer
+		// (accept.go): a lease failure never converts a committed claim
+		// into an API error, and a claim made with no lease is never
+		// falsely forfeitable later because no expiry row exists for it.
+		if lease := leaseFromDeps(d); lease != nil {
+			if lerr := lease.AcquireLease(ctx, pid, q.ID, q.Owner); lerr != nil {
+				slog.Warn("quest: accept: lease acquire failed; claim is durable",
+					"quest_id", q.ID,
+					"error", lerr,
+				)
+			}
 		}
 		scroll, _ := Scroll(ctx, db, pid, q.ID) // best-effort — not fatal
 		return AcceptOutput{Quest: q, Scroll: scroll}, nil

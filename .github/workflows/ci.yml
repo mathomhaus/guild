@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
       - name: Build
         env:
@@ -30,6 +30,16 @@ jobs:
         run: go build -trimpath ./...
 
   # Run tests on each native host (cross-run isn't a thing for go test).
+  #
+  # This job also runs the daemon parity suite
+  # (tests/integration/daemon_parity_test.go): a single Go test that runs
+  # the canonical MCP + CLI scenarios twice (daemon-down and daemon-up)
+  # in two fresh isolated homes and asserts byte-identical scrubbed
+  # output. Both arms therefore run on each host below (ubuntu + macos),
+  # which is how the ADR-005 "no-daemon mode stays byte-identical; both
+  # modes run the same suite" invariant is enforced in CI. The suite is
+  # unix-only (the daemon listens on AF_UNIX); the Windows-tests-excluded
+  # note already matches.
   test:
     name: test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -43,7 +53,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
       - name: Test
         run: go test -race -count=1 ./...
@@ -54,12 +64,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
       # Install golangci-lint via go install so it gets compiled with the
-      # runner's Go 1.25 toolchain. The prebuilt v1.60 binary from
+      # runner's go.mod-selected toolchain. The prebuilt v1.60 binary from
       # golangci-lint-action was built with Go 1.23 and refuses to lint
-      # go.mod's 1.25 target; compiling from source makes the version
+      # go.mod's target; compiling from source makes the version
       # check agree with the target.
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
@@ -74,7 +84,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
       - name: Build sqlcheck
         run: go build -o sqlcheck ./cmd/sqlcheck

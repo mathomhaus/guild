@@ -78,10 +78,10 @@ func TestAutoBackfill_EndToEnd(t *testing.T) {
 	maybeTriggerAutoBackfill(deps, logger)
 
 	// Wait for completion (bounded). The sync.WaitGroup inside
-	// runAutoBackfill closes autoBackfillDoneCh when every per-corpus
+	// runAutoBackfill closes the gate's doneCh when every per-corpus
 	// goroutine finishes.
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(30 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 30s; logs:\n%s", logBuf.String())
 	}
@@ -158,7 +158,7 @@ func TestAutoBackfill_ExactlyOnce(t *testing.T) {
 	wg.Wait()
 
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(10 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 10s")
 	}
@@ -209,7 +209,7 @@ func TestAutoBackfill_NoOpWhenCovered(t *testing.T) {
 
 	maybeTriggerAutoBackfill(deps, logger)
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(5 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 5s")
 	}
@@ -329,7 +329,7 @@ func seedQuestForAutoBackfill(t *testing.T, path string, count int) {
 		// Trigger tasks_fts_status_ai populates tasks_fts_rows; guard
 		// with INSERT OR IGNORE so an already-populated row is fine.
 		if _, err := db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO tasks_fts_rows (task_id) VALUES (?)`,
+			`INSERT OR IGNORE INTO tasks_fts_rows (project_id,task_id) VALUES ('p',?)`,
 			taskID,
 		); err != nil {
 			t.Fatalf("seed tasks_fts_rows %s: %v", taskID, err)
@@ -464,7 +464,7 @@ func mustHaveEvent(t *testing.T, events []autoBackfillEvent, msg, corpus string)
 //
 // Design choice: Option 1 from the QUEST-248 spec. Inject a fail-
 // intermittently shim into BackfillOptions.InsertHook via the
-// autoBackfillInsertHook test seam in embed_autobackfill.go. Option 1
+// backfillGate.insertHook test seam in embed_autobackfill.go. Option 1
 // beats Option 2 (concurrent goroutines + real lock contention) on CI
 // determinism: the failure budget is exact, the embedder is the
 // deterministic stub, and convergence is a function of the iteration
@@ -578,7 +578,7 @@ func runQUEST248InsertHookCase(t *testing.T, tc quest248Case) {
 	// is single-goroutine per corpus today, but the test seam should
 	// not bake that assumption into the hook).
 	var invocations atomic.Int64
-	autoBackfillInsertHook = func(ctx context.Context, db *sql.DB, corpus embed.VectorCorpus, entry embed.PendingEntry, vec []float32, modelID string) error {
+	processBackfillGate.insertHook = func(ctx context.Context, db *sql.DB, corpus embed.VectorCorpus, entry embed.PendingEntry, vec []float32, modelID string) error {
 		n := invocations.Add(1)
 		if tc.policy(n) {
 			return embed.InsertVectorRow(ctx, db, corpus, entry, vec, modelID)
@@ -590,7 +590,7 @@ func runQUEST248InsertHookCase(t *testing.T, tc quest248Case) {
 		// counts the row as Failed and continues.
 		return contextStub("simulated SQLITE_BUSY: writer-lock contention")
 	}
-	t.Cleanup(func() { autoBackfillInsertHook = nil })
+	t.Cleanup(func() { processBackfillGate.insertHook = nil })
 
 	logger := slog.New(slog.NewJSONHandler(newSafeBuffer(), &slog.HandlerOptions{Level: slog.LevelDebug}))
 	deps := &lore.EmbedDeps{
@@ -602,7 +602,7 @@ func runQUEST248InsertHookCase(t *testing.T, tc quest248Case) {
 
 	maybeTriggerAutoBackfill(deps, logger)
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(60 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 60s")
 	}
@@ -718,7 +718,7 @@ func TestAutoBackfill_QUEST246_HistoricalQuestsBackfilled(t *testing.T) {
 	maybeTriggerAutoBackfill(deps, logger)
 
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(60 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 60s")
 	}
@@ -796,7 +796,7 @@ func TestAutoBackfill_SilentSuccessGuard(t *testing.T) {
 
 	maybeTriggerAutoBackfill(deps, logger)
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(30 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 30s")
 	}
@@ -852,7 +852,7 @@ func TestAutoBackfill_ArmGateFlipsToRRF(t *testing.T) {
 	}
 	maybeTriggerAutoBackfill(deps, logger)
 	select {
-	case <-autoBackfillDoneCh:
+	case <-processBackfillGate.doneCh:
 	case <-time.After(60 * time.Second):
 		t.Fatalf("auto-backfill did not finish within 60s")
 	}
@@ -938,17 +938,17 @@ func seedQuestHistoricalRows(t *testing.T, path string, count int) {
 	// + body. Production already applied this once via storage.Migrate;
 	// re-running it after the historical seed is what closes the gap.
 	if _, err := db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO tasks_fts_rows (task_id)
-		SELECT DISTINCT task_id FROM task_status;
+		INSERT OR IGNORE INTO tasks_fts_rows (project_id,task_id)
+		SELECT project_id,task_id FROM task_status;
 	`); err != nil {
 		t.Fatalf("re-run migration 006 INSERT: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
 		UPDATE tasks_fts_rows
 		SET body = COALESCE((
-		  SELECT group_concat(tn.note, ' ')
+		  SELECT group_concat(tn.note, char(10))
 		  FROM task_notes tn
-		  WHERE tn.task_id = tasks_fts_rows.task_id
+		  WHERE tn.project_id=tasks_fts_rows.project_id AND tn.task_id = tasks_fts_rows.task_id
 		    AND tn.note LIKE '[spec]%'
 		), '')
 		WHERE body = '';
@@ -1011,7 +1011,7 @@ func seedQuestSilentSuccessShape(t *testing.T, path string, bigStatusCount, fewB
 	for i := 1; i <= fewBridgeCount; i++ {
 		taskID := "QUEST-S" + intToStr(i)
 		if _, err := db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO tasks_fts_rows (task_id, body) VALUES (?, ?)`,
+			`INSERT OR IGNORE INTO tasks_fts_rows (project_id,task_id, body) VALUES ('p',?, ?)`,
 			taskID, "[spec] subject: bridged quest "+intToStr(i),
 		); err != nil {
 			t.Fatalf("seed bridge %s: %v", taskID, err)

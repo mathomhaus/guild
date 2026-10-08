@@ -36,4 +36,11 @@ func TestBriefCommand_MCPSurface(t *testing.T) {
 			t.Errorf("MCP schema missing %s", want)
 		}
 	}
+	// The hook-mode switches are CLI-only: they must never surface on
+	// the MCP tool schema.
+	for _, banned := range []string{`"auto"`, `"capture"`} {
+		if strings.Contains(schema, banned) {
+			t.Errorf("MCP schema must not expose CLI-only arg %s", banned)
+		}
+	}
 }

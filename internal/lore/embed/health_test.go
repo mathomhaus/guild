@@ -85,12 +85,27 @@ func seedEntriesWithState(t *testing.T, db *sql.DB, n int, state string) {
 	t.Helper()
 	ctx := context.Background()
 	for i := range n {
-		if _, err := db.ExecContext(ctx,
+		result, err := db.ExecContext(ctx,
 			`INSERT INTO entries (project_id, summary, vector_state, status)
 			 VALUES ('test', ?, ?, 'current')`,
 			fmt.Sprintf("entry %d", i), state,
-		); err != nil {
-			t.Fatalf("seed entry: %v", err)
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state != "pending" {
+			id, _ := result.LastInsertId()
+			var text string
+			if err := db.QueryRow(`SELECT summary FROM entries WHERE id=?`, id).Scan(&text); err != nil {
+				t.Fatal(err)
+			}
+			hash := ContentHash(text)
+			if state == "stale" {
+				hash = "old hash"
+			}
+			if _, err := db.Exec(`INSERT INTO lore_vectors VALUES(?,'bge-small-en-v1.5-int8-cls',384,zeroblob(384),1,?)`, id, hash); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }
@@ -103,6 +118,7 @@ func TestReadHealthReport_Healthy(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	seedMeta(t, db, EmbedderStateEnabled, 10, 10, 0)
+	seedEntriesWithState(t, db, 10, "indexed")
 
 	r, err := ReadHealthReport(ctx, db, LoreCorpus{})
 	if err != nil {
@@ -299,8 +315,8 @@ func TestSessionLine_Variants(t *testing.T) {
 			covNum:    47,
 			covDen:    100,
 			pending:   53,
-			wantStart: "embedder: backfilling",
-			wantSub:   "47%",
+			wantStart: "embedder: repair needed",
+			wantSub:   "0%",
 		},
 		{
 			name:      "stale_vectors",
@@ -483,8 +499,12 @@ func TestQuantizeInt8_RoundTrip(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			blob := quantizeInt8(tc.in)
-			if len(blob) != len(tc.in) {
-				t.Errorf("len(blob) = %d, want %d", len(blob), len(tc.in))
+			want := len(tc.in)
+			if tc.name == "zero" || tc.name == "short" {
+				want = 0
+			}
+			if len(blob) != want {
+				t.Errorf("len(blob) = %d, want %d", len(blob), want)
 			}
 		})
 	}

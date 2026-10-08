@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -547,4 +548,176 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestResolveKindValidDays covers the override-map contract: a present
+// key wins (0 = never stale = nil), a nil map or missing key falls back
+// to the built-in kindValidDays defaults.
+func TestResolveKindValidDays(t *testing.T) {
+	cases := []struct {
+		name      string
+		kind      Kind
+		overrides map[string]int
+		want      *int // nil = never stale
+	}{
+		{"nil map research falls back to 30", KindResearch, nil, intPtr(30)},
+		{"nil map decision falls back to 180", KindDecision, nil, intPtr(180)},
+		{"nil map idea falls back to never stale", KindIdea, nil, nil},
+		{"override research=1 wins", KindResearch, map[string]int{"research": 1}, intPtr(1)},
+		{"override decision=365 wins", KindDecision, map[string]int{"decision": 365}, intPtr(365)},
+		{"override research=0 means never stale", KindResearch, map[string]int{"research": 0}, nil},
+		{"override observation=14 makes a never-stale kind decay", KindObservation, map[string]int{"observation": 14}, intPtr(14)},
+		{"missing key falls back to built-in default", KindDecision, map[string]int{"research": 1}, intPtr(180)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveKindValidDays(tc.kind, tc.overrides)
+			if (got == nil) != (tc.want == nil) {
+				t.Fatalf("got %v, want %v", fmtIntPtr(got), fmtIntPtr(tc.want))
+			}
+			if got != nil && *got != *tc.want {
+				t.Errorf("got %d, want %d", *got, *tc.want)
+			}
+		})
+	}
+}
+
+func intPtr(n int) *int { return &n }
+
+func fmtIntPtr(p *int) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%d", *p)
+}
+
+// TestInscribe_ValidDaysByKind verifies the configured window map is
+// stamped onto new entries when the caller does not pass ValidDays
+// explicitly, and that an explicit ValidDays still beats the map.
+func TestInscribe_ValidDaysByKind(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "alpha")
+	overrides := map[string]int{"research": 1, "decision": 0}
+
+	inscribe := func(t *testing.T, kind Kind, title string, validDays *int) *Entry {
+		t.Helper()
+		res, err := Inscribe(ctx, db, &InscribeParams{
+			ProjectID:       "alpha",
+			Kind:            kind,
+			Title:           title,
+			Summary:         "a two sentence summary that is long enough.",
+			Topic:           "validity",
+			ValidDays:       validDays,
+			ValidDaysByKind: overrides,
+			Now:             time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("inscribe %s: %v", kind, err)
+		}
+		return res.Entry
+	}
+
+	storedValidDays := func(t *testing.T, id int64) *int {
+		t.Helper()
+		var v sql.NullInt64
+		if err := db.QueryRowContext(ctx,
+			`SELECT valid_days FROM entries WHERE id = ?`, id).Scan(&v); err != nil {
+			t.Fatalf("query valid_days: %v", err)
+		}
+		if !v.Valid {
+			return nil
+		}
+		n := int(v.Int64)
+		return &n
+	}
+
+	// research: configured 1 beats built-in 30.
+	e := inscribe(t, KindResearch, "research window from config map", nil)
+	if e.ValidDays == nil || *e.ValidDays != 1 {
+		t.Errorf("research entry ValidDays: got %v want 1", fmtIntPtr(e.ValidDays))
+	}
+	if got := storedValidDays(t, e.ID); got == nil || *got != 1 {
+		t.Errorf("research stored valid_days: got %v want 1", fmtIntPtr(got))
+	}
+
+	// decision: configured 0 means never stale (stored NULL), beating
+	// the built-in 180.
+	e = inscribe(t, KindDecision, "decision window zero never stale", nil)
+	if e.ValidDays != nil {
+		t.Errorf("decision entry ValidDays: got %v want never stale", fmtIntPtr(e.ValidDays))
+	}
+	if got := storedValidDays(t, e.ID); got != nil {
+		t.Errorf("decision stored valid_days: got %v want NULL", fmtIntPtr(got))
+	}
+
+	// observation: key absent from the map, built-in never-stale default
+	// applies.
+	e = inscribe(t, KindObservation, "observation keeps builtin default", nil)
+	if e.ValidDays != nil {
+		t.Errorf("observation entry ValidDays: got %v want never stale", fmtIntPtr(e.ValidDays))
+	}
+
+	// explicit caller ValidDays beats the configured map.
+	nine := 9
+	e = inscribe(t, KindResearch, "explicit valid days beats config", &nine)
+	if e.ValidDays == nil || *e.ValidDays != 9 {
+		t.Errorf("explicit ValidDays: got %v want 9", fmtIntPtr(e.ValidDays))
+	}
+	if got := storedValidDays(t, e.ID); got == nil || *got != 9 {
+		t.Errorf("explicit stored valid_days: got %v want 9", fmtIntPtr(got))
+	}
+}
+
+// TestInscribe_ValidDaysByKind_EchoTiming is the decay integration
+// check: a custom research window changes when a newly inscribed entry
+// starts fading, while an entry stamped before the window change keeps
+// its stored window. Both entries are 2 days old at read time; only the
+// 1-day window fades.
+func TestInscribe_ValidDaysByKind_EchoTiming(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "alpha")
+	twoDaysAgo := time.Now().UTC().Add(-48 * time.Hour)
+
+	// Entry stamped under the built-in default window (30d).
+	before, err := Inscribe(ctx, db, &InscribeParams{
+		ProjectID: "alpha",
+		Kind:      KindResearch,
+		Title:     "stamped before the window change",
+		Summary:   "a two sentence summary that is long enough.",
+		Topic:     "validity",
+		Now:       twoDaysAgo,
+	})
+	if err != nil {
+		t.Fatalf("inscribe before: %v", err)
+	}
+
+	// Entry stamped after the operator configured research=1.
+	after, err := Inscribe(ctx, db, &InscribeParams{
+		ProjectID:       "alpha",
+		Kind:            KindResearch,
+		Title:           "stamped after the window change",
+		Summary:         "a different two sentence summary, long enough.",
+		Topic:           "validity",
+		ValidDaysByKind: map[string]int{"research": 1},
+		Now:             twoDaysAgo,
+	})
+	if err != nil {
+		t.Fatalf("inscribe after: %v", err)
+	}
+
+	echoes, err := Echoes(ctx, db, "alpha", false)
+	if err != nil {
+		t.Fatalf("Echoes: %v", err)
+	}
+	if len(echoes) != 1 {
+		t.Fatalf("want exactly 1 fading echo, got %d: %+v", len(echoes), echoes)
+	}
+	if echoes[0].Entry.ID != after.Entry.ID {
+		t.Errorf("fading entry: got LORE-%d want LORE-%d (the 1-day window)",
+			echoes[0].Entry.ID, after.Entry.ID)
+	}
+	if !strings.Contains(echoes[0].Reason, "valid: 1d") {
+		t.Errorf("echo reason should cite the 1-day window, got %q", echoes[0].Reason)
+	}
+	_ = before
 }

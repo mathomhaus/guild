@@ -62,6 +62,10 @@ _no arguments_
 {
   "additionalProperties": false,
   "properties": {
+    "brief_only": {
+      "description": "when true, return only the last briefing",
+      "type": "boolean"
+    },
     "project": {
       "description": "directory basename, e.g. 'guild'. Optional — when omitted, auto-infers from the MCP server's cwd via git-toplevel lookup. Pass explicitly to override or when cwd auto-inference can't reach the project. Auto-infer handles git worktrees — falls back to the main-repo path if the worktree path isn't registered.",
       "type": "string"
@@ -128,7 +132,7 @@ _no arguments_
 
 ## `lore_appraise`
 
-Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary — if current results exist, use them instead of re-deriving.
+Search lore before storing new knowledge or spawning research subagents. Returns ranked entries with project, kind, age, and summary. Results are evidence candidates; verify relevance before using them. Scores are not answer confidence.
 
 _no arguments_
 
@@ -151,7 +155,7 @@ _no arguments_
       "type": "string"
     },
     "query": {
-      "description": "search query; BM25+recency+title-boost ranked",
+      "description": "search query; ranked lexical and semantic evidence candidates",
       "type": "string"
     },
     "since": {
@@ -1434,7 +1438,7 @@ _no arguments_
 
 ## `quest_search`
 
-BM25+stopwords full-text search over quest subjects and spec notes. When quest vector coverage >= 90%, adds a semantic arm and RRF-fuses (k=60, same gate and fusion as lore_appraise). Returns up to 10 results. Replaces quest list --all | grep.
+BM25+stopwords full-text search over quest subjects and spec notes. When fresh quest vectors are available, adds a semantic arm and blends rankings while preserving strong results from either arm. Returns up to 10 results. Replaces quest list --all | grep.
 
 _no arguments_
 

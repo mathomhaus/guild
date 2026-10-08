@@ -182,7 +182,8 @@ func (m Manifest) hasAssetBytes() bool {
 // (false, nil) if the existing file already matched wantSHA. Any other
 // return value is an error.
 //
-// Atomic rename pattern: write to path+".tmp-<pid>", fsync, rename.
+// Atomic rename pattern: create a unique sibling temporary file, fsync, rename.
+// Separate temporary files are required even for writers in the same process.
 // This prevents partial extraction if the process dies mid-write. The
 // temp file is removed on any error path.
 func verifyOrWrite(path string, bytes []byte, wantSHA string, mode os.FileMode) (bool, error) {
@@ -191,11 +192,12 @@ func verifyOrWrite(path string, bytes []byte, wantSHA string, mode os.FileMode) 
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	tmp := fmt.Sprintf("%s.tmp-%d", path, os.Getpid())
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return false, fmt.Errorf("open tmp: %w", err)
 	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
 	if _, err := f.Write(bytes); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)

@@ -186,7 +186,7 @@ func TestQuestCorpus_LSP(t *testing.T) {
 		// populates tasks_fts_rows. Since we used INSERT OR IGNORE, the row
 		// may already exist from the trigger. Ensure it exists.
 		if _, err := db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO tasks_fts_rows (task_id) VALUES (?)`,
+			`INSERT OR IGNORE INTO tasks_fts_rows (project_id, task_id) VALUES ('p', ?)`,
 			s.taskID,
 		); err != nil {
 			t.Fatalf("seed tasks_fts_rows %s: %v", s.taskID, err)
@@ -243,13 +243,13 @@ func TestQuestCorpus_LSP(t *testing.T) {
 		t.Fatalf("seed QUEST-4 note: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO tasks_fts_rows (task_id) VALUES (?)`, newTaskID,
+		`INSERT OR IGNORE INTO tasks_fts_rows (project_id, task_id) VALUES ('p', ?)`, newTaskID,
 	); err != nil {
 		t.Fatalf("seed QUEST-4 bridge: %v", err)
 	}
 	var newBridgeID int64
 	if err := db.QueryRowContext(ctx,
-		`SELECT id FROM tasks_fts_rows WHERE task_id = ?`, newTaskID,
+		`SELECT id FROM tasks_fts_rows WHERE project_id = 'p' AND task_id = ?`, newTaskID,
 	).Scan(&newBridgeID); err != nil {
 		t.Fatalf("read QUEST-4 bridge id: %v", err)
 	}
@@ -338,10 +338,11 @@ func TestQuestCorpus_Migration006_BackfillsHistoricalRows(t *testing.T) {
 		t.Fatalf("precondition violated: %d historical bridge rows already present; test cannot exercise 006", preBridge)
 	}
 
-	// Re-execute the migration-006 backfill SQL. Idempotent by design.
+	// Exercise the historical backfill with the project-qualified identity
+	// required since migration 014. Storage migration tests replay actual SQL.
 	const migration006SQL = `
-		INSERT OR IGNORE INTO tasks_fts_rows (task_id)
-		SELECT DISTINCT task_id FROM task_status;
+		INSERT OR IGNORE INTO tasks_fts_rows (project_id, task_id)
+		SELECT project_id, task_id FROM task_status;
 	`
 	if _, err := db.ExecContext(ctx, migration006SQL); err != nil {
 		t.Fatalf("re-run migration 006 INSERT: %v", err)
@@ -349,9 +350,9 @@ func TestQuestCorpus_Migration006_BackfillsHistoricalRows(t *testing.T) {
 	const migration006BodySQL = `
 		UPDATE tasks_fts_rows
 		SET body = COALESCE((
-		  SELECT group_concat(tn.note, ' ')
+		  SELECT group_concat(tn.note, char(10))
 		  FROM task_notes tn
-		  WHERE tn.task_id = tasks_fts_rows.task_id
+		  WHERE tn.project_id = tasks_fts_rows.project_id AND tn.task_id = tasks_fts_rows.task_id
 		    AND tn.note LIKE '[spec]%'
 		), '')
 		WHERE body = '';
@@ -429,13 +430,13 @@ func TestQuestCorpus_SourceText(t *testing.T) {
 		t.Fatalf("seed task_notes: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO tasks_fts_rows (task_id) VALUES ('QUEST-5')`,
+		`INSERT OR IGNORE INTO tasks_fts_rows (project_id, task_id) VALUES ('p', 'QUEST-5')`,
 	); err != nil {
 		t.Fatalf("seed bridge row: %v", err)
 	}
 	var bridgeID int64
 	if err := db.QueryRowContext(ctx,
-		`SELECT id FROM tasks_fts_rows WHERE task_id = 'QUEST-5'`,
+		`SELECT id FROM tasks_fts_rows WHERE project_id = 'p' AND task_id = 'QUEST-5'`,
 	).Scan(&bridgeID); err != nil {
 		t.Fatalf("read bridge id: %v", err)
 	}

@@ -98,8 +98,29 @@ func Dossier(ctx context.Context, db *sql.DB, project string) (*DossierOutput, e
 	out.Whispers = whispers
 
 	out.Text = renderDossier(out)
+
+	// ADR-006 Phase 7 optional compaction seam. DossierTransform is nil by
+	// default and the compression module only makes it return a compacted
+	// form when [modules].compression AND [compression].dossier_compact are
+	// both on. With the default config the hook is nil (or returns ok=false),
+	// so out.Text is the byte-identical dossier this function has always
+	// produced. This is the ONLY coupling to the optional capability and it
+	// is gated to a strict no-op on the default path.
+	if DossierTransform != nil {
+		if compacted, ok := DossierTransform(out); ok {
+			out.Text = compacted
+		}
+	}
 	return out, nil
 }
+
+// DossierTransform is an optional, nil-by-default hook that a capability
+// module (compression, ADR-006 Phase 7) may set to rewrite the dossier text
+// into a compact form plus a retrieve affordance. It is consulted only after
+// the canonical dossier text is built; returning ok=false (or leaving it nil)
+// preserves the exact bytes lore has always emitted. lore never imports the
+// module that sets it, so this stays a one-way seam with no import cycle.
+var DossierTransform func(out *DossierOutput) (text string, ok bool)
 
 // queryDossier runs a kind+status-constrained query sorted by
 // created_at with a fixed LIMIT. Used by every dossier section that

@@ -97,3 +97,50 @@ func finalizeRRF(scores map[int64]float64, limit int) Ranked {
 	}
 	return out
 }
+
+// FuseBestRank preserves strong evidence from either arm. Its dominant
+// signal is the reciprocal of the best rank; agreement contributes only
+// the smaller, smoothed reciprocal-rank signal. Ordinary RRF(k=60) lets
+// rank 60 in both arms beat rank 1 in one, which is unsafe with partial
+// indexes or lexical queries that have no semantic counterpart.
+//
+// Unlike Fuse, this policy does not require agreement to keep a top result.
+// It can also promote a noisy arm's top hit: consumers must treat results
+// as candidates, not calibrated answers. Ties use ascending entity IDs.
+func FuseBestRank(a, b Ranked, limit int) Ranked {
+	scores := BestRankScores(a, b)
+	return finalizeRRF(scores, limit)
+}
+
+// BestRankScores exposes the fusion signal for diagnostics. Duplicates
+// within one arm contribute once, using their earliest rank.
+func BestRankScores(a, b Ranked) map[int64]float64 {
+	ar, br := uniqueRanks(a), uniqueRanks(b)
+	scores := make(map[int64]float64, len(ar)+len(br))
+	for id, rank := range ar {
+		scores[id] = 1 / float64(rank)
+	}
+	for id, rank := range br {
+		other, ok := ar[id]
+		if !ok {
+			scores[id] = 1 / float64(rank)
+			continue
+		}
+		best, worst := rank, other
+		if best > worst {
+			best, worst = worst, best
+		}
+		scores[id] = 1/float64(best) + 1/float64(RRFK+worst)
+	}
+	return scores
+}
+
+func uniqueRanks(list Ranked) map[int64]int {
+	ranks := make(map[int64]int, len(list))
+	for i, id := range list {
+		if _, ok := ranks[id]; !ok {
+			ranks[id] = i + 1
+		}
+	}
+	return ranks
+}

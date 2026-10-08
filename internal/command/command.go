@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -116,6 +117,8 @@ type Deps struct {
 	// (e.g. quest_post with spec=). Nil means the feature is unavailable
 	// for that surface / test setup.
 	OpenLoreDB func(ctx context.Context) (*sql.DB, error)
+	// OpenQuestDB provides the quest corpus for combined embedding health.
+	OpenQuestDB func(ctx context.Context) (*sql.DB, error)
 	// EvaluateHints, when non-nil, is called by the MCP handler wrapper
 	// after each successful tool invocation. Returns a HintFire the
 	// wrapper formats and prepends/appends to the tool's output body.
@@ -123,6 +126,18 @@ type Deps struct {
 	// never break a tool call. See internal/hints/engine.go for the
 	// reference implementation wired into Register().
 	EvaluateHints EvaluateHintsFunc
+	// ExecRemote, when non-nil, gives the cobra adapter a transport for
+	// running a verb's Handler inside the guild daemon (registry
+	// JSON-exec, ADR-005 Part 1). The adapter ships json.Marshal(I) and
+	// decodes the returned json.Marshal(O); CLIFormat then renders the
+	// round-tripped O locally, so terminal output stays byte-identical.
+	//
+	// Error contract: returning a *RemoteHandlerError means the Handler
+	// ran remotely and failed (final, never re-run locally); any other
+	// error means the transport failed and the adapter falls back to the
+	// local Handler. Only CLI-side Deps set this; MCP-side Deps and the
+	// daemon's own exec Deps leave it nil.
+	ExecRemote func(ctx context.Context, req RemoteExecRequest) (json.RawMessage, error)
 	// Embed is the optional embedding-pipeline port. The field type is
 	// `any` so the command package does not import internal/lore (which
 	// would create a cycle: lore registers commands, command depends on
@@ -135,12 +150,70 @@ type Deps struct {
 	// See internal/lore/embed_deps.go for the port definition and
 	// QUEST-213 for the wiring rationale.
 	Embed any
+	// LoreValidDays, when non-nil, returns the merged per-kind
+	// valid_days windows from config ([inscribe.valid_days]): kind name
+	// to window in days, 0 meaning "never stale". Adapters wire a
+	// closure over config.Load; the field stays a plain map-returning
+	// func so neither this package nor internal/lore below it imports
+	// internal/config. Called lazily at handler invocation time, so the
+	// long-lived MCP server observes config edits without a restart and
+	// CLI verbs that never inscribe pay no config read. A nil func or
+	// nil map falls back to the built-in kind defaults in internal/lore.
+	LoreValidDays func() map[string]int
+	// Lease is the optional quest-lease port (ADR-005 Part 1, daemon
+	// Phase 3). The field type is `any` so the command package does not
+	// import internal/quest (which would create a cycle: quest registers
+	// commands, command depends on quest). The quest_accept handler
+	// type-asserts this to a quest.LeaseAcquirer via leaseFromDeps(d) and
+	// records a lease after a claim commits, best-effort.
+	//
+	// A nil value (the default) is the no-daemon path: quest_accept
+	// performs exactly today's writes and creates zero task_leases rows,
+	// so its DB effects stay byte-identical. Only the daemon constructs
+	// Deps with a non-nil Lease, bound to its per-session identity. The
+	// in-process stdio server and the plain CLI leave it nil. See
+	// internal/quest/lease.go for the port definition.
+	Lease any
+}
+
+// ResolveLoreValidDays returns the configured per-kind valid_days
+// windows, or nil when no provider is wired (the built-in kind defaults
+// apply downstream).
+func (d Deps) ResolveLoreValidDays() map[string]int {
+	if d.LoreValidDays == nil {
+		return nil
+	}
+	return d.LoreValidDays()
 }
 
 // Registrant is the erased-handle interface that lets a heterogeneous
 // set of Command[I, O] values share registration code. Command[I, O]
 // satisfies this via its BindCobra / BindMCP methods.
+//
+// WireName and CobraPath expose the two identifiers a type-erased caller
+// needs to wire a verb without recovering its concrete generic type: the
+// MCP tool name (for tracking / parity diffs) and the cobra tree path (for
+// deriving the per-verb telemetry label). They are accessors, not the
+// exported Name / CLIPath struct fields, because a method may not share a
+// name with a field on the same type. Added for the ADR-006 module-loop
+// CLI binder, which iterates []Registrant.
 type Registrant interface {
 	BindCobra(parent *cobra.Command, d Deps)
 	BindMCP(server *sdkmcp.Server, d Deps)
+	// BindExec registers the verb on a daemon-side ExecRegistry with the
+	// given Deps builder (the type-erased RegisterExec). Lets the ADR-006
+	// module loop build the daemon JSON-exec dispatch table from a module's
+	// Commands() without recovering each command's concrete generic type.
+	// Exec-exempt verbs are skipped exactly as RegisterExec skips them.
+	BindExec(r *ExecRegistry, deps DepsBuilder)
+	// WireName returns the MCP tool wire name (Command.Name).
+	WireName() string
+	// CobraPath returns the cobra tree path (Command.CLIPath).
+	CobraPath() []string
 }
+
+// WireName returns the command's MCP tool wire name (the Name field).
+func (c *Command[I, O]) WireName() string { return c.Name }
+
+// CobraPath returns the command's cobra tree path (the CLIPath field).
+func (c *Command[I, O]) CobraPath() []string { return c.CLIPath }

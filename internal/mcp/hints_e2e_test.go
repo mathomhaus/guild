@@ -62,7 +62,7 @@ func TestHints_E2E_InscribeLooksLikeQuest(t *testing.T) {
 // regression: guild_session_start runs, then lore_appraise with a query
 // that would otherwise attract no-session-start must NOT emit that hint.
 // The historical bug was that register.go built separate hint engines for
-// the lore-side and quest-side Deps, so hintsRecordBootstrap updated only
+// the lore-side and quest-side Deps, so recordHintsBootstrap updated only
 // the latest engine while the earlier-bound lore tools kept routing
 // through the stale engine.
 func TestHints_E2E_NoSessionStart_SuppressedAfterBootstrap(t *testing.T) {

@@ -125,3 +125,22 @@ func TestRRFK_IsStandardValue(t *testing.T) {
 		t.Errorf("RRFK = %d, want 60 (TREC standard, ADR-003)", RRFK)
 	}
 }
+
+func TestFuseBestRankPreservesIndependentEvidence(t *testing.T) {
+	a, b := Ranked{1, 2}, Ranked{3, 4}
+	for id := int64(10); id < 70; id++ {
+		a = append(a, id)
+		b = append(b, id)
+	}
+	got := FuseBestRank(a, b, 4)
+	want := Ranked{1, 3, 2, 4}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("top single-arm evidence buried by weak agreement: got %v want %v", got, want)
+	}
+	if best := FuseBestRank(Ranked{1, 2}, Ranked{2, 1}, 2); !reflect.DeepEqual(best, Ranked{1, 2}) {
+		t.Fatalf("agreement/tie ordering: %v", best)
+	}
+	if got := FuseBestRank(Ranked{1, 1, 2}, nil, 0); !reflect.DeepEqual(got, Ranked{1, 2}) {
+		t.Fatalf("duplicate evidence counted twice: %v", got)
+	}
+}

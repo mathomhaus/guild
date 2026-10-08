@@ -181,3 +181,13 @@ type VectorCorpus interface {
 	CorpusSources
 	CorpusMeta
 }
+
+// CorpusSourceProjection optionally provides the stored canonical source column
+// for bulk coverage. It must produce exactly the text returned by SourceText.
+// Adapters with computed sources can omit this and use the general read path.
+type CorpusSourceProjection interface{ SourceTextColumn() string }
+
+// CorpusTransactionalSource provides a parameterized source lookup with one
+// entity-ID argument. Vector writers require this capability to compare the
+// source on their locked connection without a second connection or snapshot.
+type CorpusTransactionalSource interface{ SourceTextQuery() string }

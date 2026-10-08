@@ -355,6 +355,22 @@ func TestIndex_LoadFromDB_DiscardsSnapshotOlderThanSplice(t *testing.T) {
 	if idx.Epoch() != 2 {
 		t.Fatalf("stale snapshot regressed epoch: %d, want 2", idx.Epoch())
 	}
+	if _, err := idx.TopK(Quantize(deterministicUnitVec(1)), 1); !errors.Is(err, ErrIndexStale) {
+		t.Fatalf("discarded snapshot left cache queryable: %v", err)
+	}
+	if _, err := idx.CheckAndReload(ctx, db); !errors.Is(err, ErrIndexStale) {
+		t.Fatalf("stale reload silently authorized partial cache: %v", err)
+	}
+	// Once the committed snapshot catches up, the conservative gap clears.
+	mustSeedEntry(t, db, 2, "e2")
+	mustInsertVec(t, db, 2, canonModelID, Quantize(deterministicUnitVec(2)))
+	mustSetEpoch(t, db, 2)
+	if reloaded, err := idx.CheckAndReload(ctx, db); err != nil || !reloaded {
+		t.Fatalf("fresh snapshot did not recover: %v %v", reloaded, err)
+	}
+	if _, err := idx.TopK(Quantize(deterministicUnitVec(1)), 2); err != nil {
+		t.Fatalf("recovered cache not queryable: %v", err)
+	}
 }
 
 // TestIndex_Splice_InsertNew: Splice on an unknown entry_id appends a
@@ -484,12 +500,16 @@ func TestIndex_Splice_OutOfOrderSameEntry(t *testing.T) {
 	if idx.Len() != 1 {
 		t.Fatalf("Len = %d, want 1", idx.Len())
 	}
-	hits, err := idx.TopK(vNew, 1)
-	if err != nil {
-		t.Fatalf("TopK: %v", err)
+	// The slot retains the latest splice, but this synthetic gap must
+	// not authorize querying a partial cache without a DB reload.
+	idx.bindMu.RLock()
+	score := cosineInt8(vNew, idx.vectors[idx.byEntry[7]])
+	idx.bindMu.RUnlock()
+	if want := cosineInt8(vNew, vNew); score != want {
+		t.Fatalf("score %d want %d", score, want)
 	}
-	if want := cosineInt8(vNew, vNew); hits[0].Score != want {
-		t.Fatalf("score %d, want %d (stale splice overwrote newer vector)", hits[0].Score, want)
+	if _, err := idx.TopK(vNew, 1); !errors.Is(err, ErrIndexStale) {
+		t.Fatalf("dirty query returned %v", err)
 	}
 }
 
@@ -652,5 +672,113 @@ func mustSetEpoch(t *testing.T, db *sql.DB, v int64) {
 	)
 	if err != nil {
 		t.Fatalf("set epoch: %v", err)
+	}
+}
+
+// A local splice observes the highest committed epoch but may have missed an
+// external repair between its previous full snapshot and that local write.
+func TestIndexExternalRepairThenLocalSpliceForcesReload(t *testing.T) {
+	ctx := context.Background()
+	db, id := hotTestDB(t)
+	source := mustSourceText(t, db, LoreCorpus{}, id)
+	if _, err := WriteVector(ctx, db, HotDeps{Embedder: NewDeterministicEmbedder(), ModelID: canonModelID}, id, source); err != nil {
+		t.Fatal(err)
+	}
+	idx := NewIndex(LoreCorpus{}, canonModelID)
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	const replacement = "changed source from external writer"
+	if _, err := db.Exec(`UPDATE entries SET summary=? WHERE id=?`, replacement, id); err != nil {
+		t.Fatal(err)
+	}
+	external, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: canonModelID})
+	if err != nil || external.Embedded != 1 {
+		t.Fatalf("external repair=%+v err=%v", external, err)
+	}
+	ids := seedEntries(t, db, 1)
+	other := ids[0]
+	otherText := mustSourceText(t, db, LoreCorpus{}, other)
+	local, err := WriteVector(ctx, db, HotDeps{Embedder: NewDeterministicEmbedder(), ModelID: canonModelID, Index: idx}, other, otherText)
+	if err != nil || !local.Written {
+		t.Fatalf("local write=%+v err=%v", local, err)
+	}
+	if idx.Epoch() != local.Epoch {
+		t.Fatalf("observed epoch=%d want=%d", idx.Epoch(), local.Epoch)
+	}
+	if _, err := idx.TopKFiltered(make([]int8, VecDim), 1, nil); !errors.Is(err, ErrIndexStale) {
+		t.Fatalf("partial cache authorized ranking: %v", err)
+	}
+	measured, err := ReadCoverage(ctx, db, LoreCorpus{}, canonModelID, nil)
+	if err != nil || measured.Fresh != 2 {
+		t.Fatalf("DB coverage=%+v err=%v", measured, err)
+	}
+	reloaded, err := idx.CheckAndReload(ctx, db)
+	if err != nil || !reloaded {
+		t.Fatalf("epoch equality hid missing external repair: reloaded=%v err=%v", reloaded, err)
+	}
+	fresh, err := NewDeterministicEmbedder().Embed(ctx, replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.bindMu.RLock()
+	got := append([]int8(nil), idx.vectors[idx.byEntry[id]]...)
+	idx.bindMu.RUnlock()
+	want := Quantize(fresh)
+	for component := range want {
+		if got[component] != want[component] {
+			t.Fatal("external repair absent after reload")
+		}
+	}
+	if reloaded, err := idx.CheckAndReload(ctx, db); err != nil || reloaded {
+		t.Fatalf("complete snapshot did not clear dirty state: %v %v", reloaded, err)
+	}
+}
+
+func TestIndexOutOfOrderSplicesDoNotClearEpochGap(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	ids := seedEntries(t, db, 2)
+	idx := NewIndex(LoreCorpus{}, canonModelID)
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	results := make([]WriteVectorResult, 2)
+	for index, id := range ids {
+		text := mustSourceText(t, db, LoreCorpus{}, id)
+		result, err := WriteVector(ctx, db, HotDeps{Embedder: NewDeterministicEmbedder(), ModelID: canonModelID}, id, text)
+		if err != nil || !result.Written {
+			t.Fatalf("writer=%+v err=%v", result, err)
+		}
+		results[index] = result
+	}
+	if err := idx.Splice(ids[1], results[1].Vec, results[1].Epoch); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Splice(ids[0], results[0].Vec, results[0].Epoch); err != nil {
+		t.Fatal(err)
+	}
+	if idx.Len() != 2 || idx.Epoch() != results[1].Epoch {
+		t.Fatal("late splice lost a row or regressed epoch")
+	}
+	if reloaded, err := idx.CheckAndReload(ctx, db); err != nil || !reloaded {
+		t.Fatalf("late splice cleared unresolved gap: %v %v", reloaded, err)
+	}
+}
+
+func TestIndexConsecutiveLocalSpliceKeepsReloadFastPath(t *testing.T) {
+	ctx := context.Background()
+	db, id := hotTestDB(t)
+	idx := NewIndex(LoreCorpus{}, canonModelID)
+	if _, err := idx.LoadFromDB(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	source := mustSourceText(t, db, LoreCorpus{}, id)
+	result, err := WriteVector(ctx, db, HotDeps{Embedder: NewDeterministicEmbedder(), ModelID: canonModelID, Index: idx}, id, source)
+	if err != nil || !result.Written {
+		t.Fatalf("writer=%+v err=%v", result, err)
+	}
+	if reloaded, err := idx.CheckAndReload(ctx, db); err != nil || reloaded {
+		t.Fatalf("consecutive splice lost fast path: %v %v", reloaded, err)
 	}
 }

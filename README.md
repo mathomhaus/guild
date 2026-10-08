@@ -7,13 +7,13 @@
 
 <p align="center">
   <a href="https://github.com/mathomhaus/guild/actions/workflows/ci.yml"><img src="https://github.com/mathomhaus/guild/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://go.dev"><img src="https://img.shields.io/badge/go-1.25-blue" alt="Go 1.25"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/go-1.26.9-blue" alt="Go 1.26.9"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="Apache-2.0"></a>
 </p>
 
 ## What Is It
 
-`guild` is a single compiled Go binary containing a first-class MCP server backed by embedded SQLite. State lives strictly on local host; nothing leaves your machine. Search blends keyword (BM25) with vector similarity, fused via reciprocal-rank fusion, so "how did we do X last time" surfaces both exact-term and semantic neighbors.
+`guild` is a single compiled Go binary containing a first-class MCP server backed by embedded SQLite. State is stored locally, and the default embedding backend runs on your machine. The optional Ollama backend sends embedding text to the configured Ollama endpoint. Search blends keyword (BM25) with vector similarity using rank fusion that preserves strong matches from either source, so "how did we do X last time" surfaces both exact-term and semantic neighbors.
 
 Guild is designed to be operated autonomously by the agents, for the agents. Guildmasters (us humans) stay in the loop for important decisions and course corrections. Any MCP client — Claude Code, Codex, Cursor, etc. — can act as a Gate into the substrate. This lets parallel agents across different editors share context safely, using atomic locks to claim tasks without stepping on each other.
 
@@ -105,6 +105,44 @@ The Go toolchain cannot embed assets via `@latest`; this path gives
 you BM25 keyword search but not semantic (vector) retrieval. Use
 `install.sh` or `brew` for the full experience.
 
+**Docker (containerized, state in a named volume):**
+
+```bash
+make docker-build
+docker run --rm -v guild-state:/home/guild/.guild guild:latest --version
+```
+
+The image is a multi-stage build: a pure-Go (`CGO_ENABLED=0`) binary
+compiled with `-tags=withembed`, running as a non-root `guild` user on
+`debian:bookworm-slim`. Semantic retrieval works in-container out of
+the box; the bundled ONNX runtime initializes and passes its probe on
+both `linux/amd64` and `linux/arm64`. If the embedder ever fails to
+initialize (for example on an unsupported platform), guild degrades to
+BM25 keyword retrieval, exactly like a no-embed build, and `guild init`
+reports the reason. It never crashes over a missing embedder.
+
+State isolation: the container's `HOME` is `/home/guild`, and guild
+keeps everything (SQLite databases, config) under `/home/guild/.guild`.
+Mount a named volume there and lore + quests persist across containers;
+without the mount, state dies with the container. The host's `~/.guild`
+is never touched.
+
+```bash
+docker volume create guild-state
+docker run --rm -it -v guild-state:/home/guild/.guild --entrypoint /bin/sh guild:latest
+# inside the container:
+mkdir -p ~/myproject && cd ~/myproject
+guild init --yes
+guild lore inscribe "hello from docker" --kind observation \
+  --summary "First entry written inside the container." \
+  --topic docker --project myproject
+guild lore appraise "hello from docker"
+```
+
+`make docker-test` builds the image and runs this exact smoke flow
+(`--version`, `init`, inscribe/appraise round-trip, persistence across
+containers) against a throwaway volume.
+
 ### 2. Initialize your project
 
 ```bash
@@ -119,6 +157,26 @@ guild init
 In your editor, tell the agent: _"start a guild session for myapp."_
 
 The agent takes it from there, including all subsequent sessions.
+
+For daemon defaults, background activity, optional capabilities, and rollback,
+see [Runtime defaults and upgrades](docs/runtime-and-upgrades.md).
+
+### Optional: lifecycle hooks
+
+```bash
+guild hooks install
+```
+
+Wires guild into your harness's lifecycle hooks so context arrives proactively: a brief primes each session start, a capture fires before compaction, and relevant lore is injected as you prompt. The shared config lives at `~/.guild/hooks-base.json`; edit it and run `guild hooks sync` to propagate. `guild hooks list` shows per-harness sync status, `guild hooks diff` previews what sync would change, and `guild hooks scan` inventories the hooks already in your settings (including ones guild does not manage). Guild only ever rewrites hook groups whose every command starts with `guild`; everything else in your settings files is preserved untouched. Adapters ship per harness; `guild hooks list` shows which ones your build supports.
+
+Supported harnesses:
+
+| Harness | Hook support | Settings file |
+| --- | --- | --- |
+| Claude Code | first-class hooks (verified on Claude Code 2.1.132): `SessionStart`, `PreCompact`, and `UserPromptSubmit` | `<project>/.claude/settings.json` |
+| Codex CLI | first-class hooks (Codex v0.128.0 spike-confirmed) | `<repo>/.codex/hooks.json` |
+
+Codex has no compaction lifecycle, so its adapter writes only the session-start and prompt hooks (the pre-compaction capture stays Claude-Code-shaped in the base config and is skipped for Codex). Codex documents a `[features] codex_hooks = true` gate in `~/.codex/config.toml`; current versions fire hooks without it, so `guild hooks install` test-fires `codex exec` after writing the file and tells you if your version still needs the flag. Guild never edits `~/.codex/config.toml` itself.
 
 See a few [`examples/`](./examples/) of what guild can do. All small scenarios, each under 5 minutes.
 
@@ -161,8 +219,11 @@ guild quest journal QUEST-42 "switched to exponential backoff after mock-clock t
 
 `lore appraise` is the discipline that keeps guild sharp: search
 before you research, so knowledge accretes instead of duplicating.
-Appraise runs hybrid (BM25 + vector RRF) the moment your corpus is
-indexed.
+Appraise combines BM25 with available fresh vectors, including partially
+indexed corpora. It returns evidence candidates whose relevance you should
+check before using them. See [retrieval policy and evaluations](docs/RETRIEVAL.md)
+and the [coordinated upgrade instructions](docs/retrieval-upgrade.md) for
+existing installations.
 
 ### Act 3 — parting
 
@@ -225,6 +286,60 @@ Four primitives. Everything else in guild is a composition of these.
   alongside the oath at session start.
 
 State lives in SQLite under `~/.guild/`. Switching MCP clients requires no export, no migration.
+
+---
+
+## 🤖 Agent mode: structured CLI output
+
+MCP is guild's primary agent surface, but some agents prefer shelling
+out to a CLI: it avoids tool-schema token overhead and works in any
+harness that can run a command. Agent mode upgrades that path from
+screen-scraping to a stable contract: exactly one JSON envelope per
+invocation on stdout.
+
+```console
+$ guild quest post "wire the cache layer" --agent
+{"ok":true,"command":"quest_post","output":{"quest":{"id":"QUEST-7","subject":"wire the cache layer","priority":"P2","status":"next","updated_at":"..."}}}
+
+$ guild quest accept QUEST-99 --agent
+{"ok":false,"command":"quest_accept","error":"quest not found: QUEST-99"}
+```
+
+The envelope schema is minimal and append-only:
+
+| field     | type   | when                                                                  |
+| --------- | ------ | --------------------------------------------------------------------- |
+| `ok`      | bool   | always                                                                |
+| `command` | string | always; the verb's wire name, identical to the matching MCP tool name |
+| `output`  | object | on success; the verb's typed result, the same shape `--json` emits    |
+| `error`   | string | on failure                                                            |
+| `hint`    | string | optional; recovery guidance on errors, non-fatal warnings on success  |
+
+Exit codes are unchanged: zero on success, non-zero on failure, with
+the failure already serialized on stdout. Without agent mode, output is
+byte-identical to what it was before; the human rendering is untouched.
+
+**Turning it on.** Three mechanisms, in priority order:
+
+1. `--agent` on any verb. Explicit and per-invocation; `--agent=false`
+   forces human output even when the environment says otherwise.
+2. `GUILD_AGENT=1` in the environment (`GUILD_AGENT=0` forces it off).
+3. Auto-detection. Harnesses that export an environment marker into the
+   shells they spawn are recognized without any flag. Currently
+   detected: `CLAUDECODE` (Claude Code), `CODEX_SANDBOX` and
+   `CODEX_SANDBOX_NETWORK_DISABLED` (Codex CLI), `CURSOR_AGENT`
+   (Cursor agent CLI). Any agent whose harness exports no marker gets
+   identical behavior from `GUILD_AGENT=1`; no harness is privileged.
+
+**Scope.** Agent mode covers the registry-generated verbs: the `lore`
+and `quest` verbs that mirror MCP tools 1:1. Four verbs predate agent
+mode with a string `--agent <id>` flag carrying agent identity
+(`quest journal`, `quest orders`, `quest campfire`, `quest summon`);
+they keep that meaning, so reach them through the environment toggle
+instead. Hand-written helpers (`guild init`, `guild status`,
+`lore appraise`) keep human output for now. When both are set,
+`--agent` takes precedence over `--json`: the envelope already wraps
+the same typed output.
 
 ---
 

@@ -53,6 +53,9 @@ var CatalogCommand = &command.Command[CatalogInput, CatalogCmdOutput]{
 			Topic:     in.Topic,
 			Kind:      Kind(in.Kind),
 			Tags:      in.Tags,
+			// Configured per-kind decay windows ([inscribe.valid_days]);
+			// nil falls back to the built-in kind defaults.
+			ValidDaysByKind: d.ResolveLoreValidDays(),
 		})
 		if err != nil {
 			return CatalogCmdOutput{}, err

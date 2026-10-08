@@ -7,8 +7,6 @@ import (
 	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/mathomhaus/guild/internal/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,11 +24,11 @@ var setProjectTool = &sdkmcp.Tool{
 	Description: "Switch the active project for the rest of this session. Use to work across projects in one MCP connection.",
 }
 
-func registerSetProject(s *sdkmcp.Server) {
-	sdkmcp.AddTool(s, setProjectTool, handleSetProject)
+func (c *serverCore) registerSetProject(s *sdkmcp.Server) {
+	sdkmcp.AddTool(s, setProjectTool, c.handleSetProject)
 }
 
-func handleSetProject(
+func (c *serverCore) handleSetProject(
 	ctx context.Context,
 	_ *sdkmcp.CallToolRequest,
 	in setProjectInput,
@@ -39,14 +37,14 @@ func handleSetProject(
 	var handlerErr error
 	var respBytes uint
 	//nolint:gocritic // ptrToRefParam — defer reads late-bound values
-	defer recordMCPTelemetry(ctx, "guild_set_project", start, &handlerErr, &respBytes)
+	defer c.recordMCPTelemetry(ctx, "guild_set_project", start, &handlerErr, &respBytes)
 
 	name := strings.TrimSpace(in.Project)
 	if name == "" {
 		handlerErr = fmt.Errorf("empty project name")
 		return toolErrorf("guild_set_project: empty project name — pass project='<name>'"), nil, nil
 	}
-	if err := session.SetActiveProject(ctx, name); err != nil {
+	if err := c.sessions.SetActiveProject(ctx, name); err != nil {
 		handlerErr = err
 		return toolFatalf("persist active project %q: %v", name, err), nil, nil
 	}
@@ -73,16 +71,16 @@ var guildStatusTool = &sdkmcp.Tool{
 	Description: "On-demand dashboard mirroring guild_session_start — last brief, oath, echoes, top bounty, parallelism. Call anytime to re-orient mid-session without re-bootstrapping.",
 }
 
-func registerGuildStatus(s *sdkmcp.Server) {
-	sdkmcp.AddTool(s, guildStatusTool, handleGuildStatus)
+func (c *serverCore) registerGuildStatus(s *sdkmcp.Server) {
+	sdkmcp.AddTool(s, guildStatusTool, c.handleGuildStatus)
 }
 
-func handleGuildStatus(
+func (c *serverCore) handleGuildStatus(
 	ctx context.Context,
 	_ *sdkmcp.CallToolRequest,
 	in guildStatusInput,
 ) (*sdkmcp.CallToolResult, any, error) {
-	pid, err := resolveProject(ctx, in.Project)
+	pid, err := c.resolveProject(ctx, in.Project)
 	if err != nil {
 		return toolErrorf("%s", err), nil, nil
 	}

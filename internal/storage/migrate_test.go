@@ -439,3 +439,118 @@ func contains(haystack []string, needle string) bool {
 // (purely so the linter doesn't flag an unused import in a future edit).
 var _ io.Writer = (*bytes.Buffer)(nil)
 var _ = embed.FS{}
+
+// Historical binaries used version 009 for two unrelated schemas. Keep the
+// recorded history and all user payloads while converging both branches.
+func TestMigrate_HistoricalVersionNine(t *testing.T) {
+	for _, history := range []string{"body", "sleep", "sleep-with-body", "body-with-sleep"} {
+		t.Run(history, func(t *testing.T) {
+			ctx := context.Background()
+			db := openFreshDB(t)
+			if _, err := db.Exec(schemaMigrationsDDL); err != nil {
+				t.Fatal(err)
+			}
+			ms, err := loadMigrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range ms {
+				if m.version <= 8 {
+					if err := applyOne(ctx, db, m); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := db.Exec(`INSERT INTO projects(id,path) VALUES('fixture','/fixture'); INSERT INTO entries(project_id,topic,kind,title,summary) VALUES('fixture','test','observation','kept','kept summary'); INSERT INTO task_notes(project_id,task_id,agent_id,note) VALUES('fixture','task','fixture','kept note'); INSERT INTO lore_vectors VALUES(1,'fixture',1,X'00000000',1,'kept hash')`); err != nil {
+				t.Fatal(err)
+			}
+			body := strings.HasPrefix(history, "body") || history == "sleep-with-body"
+			sleep := strings.HasPrefix(history, "sleep") || history == "body-with-sleep"
+			if body {
+				if _, err := db.Exec(`ALTER TABLE entries ADD COLUMN body TEXT NOT NULL DEFAULT ''; UPDATE entries SET body='kept body'`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if sleep {
+				raw, err := fs.ReadFile(migrationFS, "migrations/009_sleep_journal.up.sql")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, stmt := range splitStatements(string(raw)) {
+					if _, err := db.Exec(stmt); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := db.Exec(`INSERT INTO sleep_passes VALUES(1,'now',NULL,'autopass',1,NULL)`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			description := "lore body"
+			if strings.HasPrefix(history, "sleep") {
+				description = "sleep journal"
+			}
+			if _, err := db.Exec(`INSERT INTO schema_migrations(version,description) VALUES(9,?)`, description); err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range ms {
+				if m.version == 10 || m.version == 11 {
+					if err := applyOne(ctx, db, m); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := db.Exec(`INSERT INTO task_leases VALUES('fixture','task','session','fixture','now','now','later'); INSERT INTO staleness_signals VALUES(1,'fixture','kept reason','fixture','now')`); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := MigrateTo(ctx, db, "", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var got string
+			if err := db.QueryRow(`SELECT description FROM schema_migrations WHERE version=9`).Scan(&got); err != nil || got != description {
+				t.Fatalf("history changed: %q %v", got, err)
+			}
+			if err := db.QueryRow(`SELECT body FROM entries WHERE id=1`).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if body && got != "kept body" {
+				t.Fatalf("body lost: %q", got)
+			}
+			for table, want := range map[string]int{"entries": 1, "task_notes": 1, "lore_vectors": 1, "task_leases": 1, "staleness_signals": 1, "sleep_passes": 0} {
+				if table == "sleep_passes" && sleep {
+					want = 1
+				}
+				var count int
+				if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != want {
+					t.Fatalf("%s count=%d want=%d err=%v", table, count, want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestMigrate_ConcurrentStartup(t *testing.T) {
+	ctx := context.Background()
+	db := openFreshDB(t)
+	errs := make(chan error, 4)
+	for range 4 {
+		go func() { errs <- MigrateTo(ctx, db, "", nil) }()
+	}
+	for range 4 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	versions, err := queryVersions(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != len(ms) {
+		t.Fatalf("versions=%v", versions)
+	}
+}

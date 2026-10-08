@@ -20,18 +20,33 @@ type Echo struct {
 
 // Echoes returns entries whose valid_days threshold has passed, plus
 // optionally (gitAware=true) entries whose file_path has been modified
-// in git since the entry was written. Only current-status entries are
-// considered — archived/superseded are already out of circulation.
+// in git since the entry was written, plus entries carrying a persisted
+// staleness signal (see staleness.go). Only current-status entries are
+// considered (archived/superseded are already out of circulation), and
+// that same filter is what retires persisted signals: a signal row only
+// surfaces while its entry is still in this scan.
 //
 // The git-aware branch shells out to `git log` per entry; failures
 // degrade silently so missing git / non-repo paths don't block the
 // time-based signal.
+//
+// Union semantics: one echo line per entry. When an entry is flagged by
+// both a query-time check and a persisted signal, the signal reason is
+// suffixed to the query-time reason ("<query reason>; <signal reason>").
+// An entry flagged only by a persisted signal surfaces with the
+// persisted reason even when gitAware=false. With zero signal rows the
+// output is identical to the signal-unaware behavior.
 func Echoes(ctx context.Context, db *sql.DB, project string, gitAware bool) ([]Echo, error) {
 	if db == nil {
 		return nil, fmt.Errorf("lore: echoes: nil db")
 	}
 	if strings.TrimSpace(project) == "" {
 		return nil, fmt.Errorf("lore: echoes: project required")
+	}
+
+	signals, err := loadStalenessSignals(ctx, db, project)
+	if err != nil {
+		return nil, fmt.Errorf("lore: echoes: %w", err)
 	}
 
 	//nolint:gosec // G202: entryColumns is a constant; no user input reaches the SQL text
@@ -60,7 +75,15 @@ func Echoes(ctx context.Context, db *sql.DB, project string, gitAware bool) ([]E
 		if err := scanEntry(rows, e); err != nil {
 			return nil, err
 		}
-		if reason := echoReason(ctx, e, now, gitAware); reason != "" {
+		reason := echoReason(ctx, e, now, gitAware)
+		if sig, ok := signals[e.ID]; ok {
+			if reason == "" {
+				reason = sig
+			} else {
+				reason = reason + "; " + sig
+			}
+		}
+		if reason != "" {
 			stale = append(stale, Echo{Entry: e, Reason: reason})
 		}
 	}

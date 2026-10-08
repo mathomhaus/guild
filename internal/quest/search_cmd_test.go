@@ -230,12 +230,17 @@ func TestQuestSearch_RRFArmAboveCoverageFloor(t *testing.T) {
 	// Seed vectors for all bridge rows using DeterministicEmbedder.
 	embedder := embed.NewDeterministicEmbedder()
 	const modelID = "bge-small-en-v1.5-int8-cls"
+	upsertQuestMeta(t, db, "quest.embedder_model_id", modelID)
 	for _, br := range bridgeRows {
-		vec, embedErr := embedder.Embed(ctx, "subject: feature variant search pipeline")
+		source, sourceErr := (embed.QuestCorpus{}).SourceText(ctx, db, br.id)
+		if sourceErr != nil {
+			t.Fatal(sourceErr)
+		}
+		vec, embedErr := embedder.Embed(ctx, source)
 		if embedErr != nil {
 			t.Fatalf("embed row %d: %v", br.id, embedErr)
 		}
-		entry := embed.PendingEntry{ID: br.id, Summary: "feature variant"}
+		entry := embed.PendingEntry{ID: br.id, Summary: source}
 		if insertErr := embed.InsertVectorRow(ctx, db, embed.QuestCorpus{}, entry, vec, modelID); insertErr != nil {
 			t.Fatalf("insert vector row %d: %v", br.id, insertErr)
 		}
@@ -271,10 +276,10 @@ func TestQuestSearch_RRFArmAboveCoverageFloor(t *testing.T) {
 	}
 }
 
-// TestQuestSearch_BM25ArmBelowCoverageFloor verifies that when quest_vectors
-// coverage is below the 0.90 gate, quest_search falls back to arm=bm25
-// cleanly: no error, no panic, results from BM25.
-func TestQuestSearch_BM25ArmBelowCoverageFloor(t *testing.T) {
+// TestQuestSearch_BM25ArmWithoutFreshVectors verifies that when no usable
+// quest vectors exist, quest_search falls back to BM25 cleanly even if cached
+// coverage counters claim a partially populated index.
+func TestQuestSearch_BM25ArmWithoutFreshVectors(t *testing.T) {
 	db, pid := newTestDB(t)
 	ctx := context.Background()
 
@@ -282,7 +287,7 @@ func TestQuestSearch_BM25ArmBelowCoverageFloor(t *testing.T) {
 	mustPost(t, db, pid, PostParams{Subject: "implement BM25 fallback coverage test"})
 	mustPost(t, db, pid, PostParams{Subject: "another quest for coverage floor check"})
 
-	// Set coverage meta below the 0.90 floor (1 vector out of 2 entities).
+	// Set misleading cached coverage (the vector table is actually empty).
 	upsertQuestMeta(t, db, "quest.embedder_state", "enabled")
 	upsertQuestMeta(t, db, "quest.embedder_model_id", "bge-small-en-v1.5-int8-cls")
 	upsertQuestMeta(t, db, "quest.vector_coverage_num", "1")

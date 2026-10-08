@@ -17,7 +17,8 @@ type EmbedderHealthInput struct {
 
 // EmbedderHealthCmdOutput wraps the HealthReport for the command registry.
 type EmbedderHealthCmdOutput struct {
-	Report *embed.HealthReport `json:"report"`
+	Report      *embed.HealthReport `json:"report"`
+	QuestReport *embed.HealthReport `json:"quest_report,omitempty"`
 }
 
 // EmbedderHealthCommand is the registry spec for `guild lore health`.
@@ -53,7 +54,19 @@ var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealth
 		if err != nil {
 			return EmbedderHealthCmdOutput{}, fmt.Errorf("lore: health: %w", err)
 		}
-		return EmbedderHealthCmdOutput{Report: report}, nil
+		out := EmbedderHealthCmdOutput{Report: report}
+		if d.OpenQuestDB != nil {
+			questDB, err := d.OpenQuestDB(ctx)
+			if err != nil {
+				return out, fmt.Errorf("quest: health: %w", err)
+			}
+			defer questDB.Close()
+			out.QuestReport, err = embed.ReadHealthReport(ctx, questDB, embed.QuestCorpus{})
+			if err != nil {
+				return out, fmt.Errorf("quest: health: %w", err)
+			}
+		}
+		return out, nil
 	},
 	CLIFormat: func(s command.CLISink, o EmbedderHealthCmdOutput) string {
 		return formatEmbedderHealth(s, o)
@@ -66,13 +79,20 @@ var EmbedderHealthCommand = &command.Command[EmbedderHealthInput, EmbedderHealth
 // formatEmbedderHealth renders the embedder health section.
 // Works for both CLI and MCP sinks (both satisfy the lineSink interface).
 func formatEmbedderHealth(s lineSink, o EmbedderHealthCmdOutput) string {
-	r := o.Report
+	result := formatCorpusHealth(s, "lore", o.Report)
+	if o.QuestReport != nil {
+		result += "\n" + formatCorpusHealth(s, "quest", o.QuestReport)
+	}
+	return result
+}
+
+func formatCorpusHealth(s lineSink, name string, r *embed.HealthReport) string {
 	if r == nil {
 		return strings.TrimRight(s.Line("🔮", "[health]", "embedder: no data available"), "\n")
 	}
 
 	var b strings.Builder
-	b.WriteString(s.Line("🔮", "[health]", "embedder section"))
+	b.WriteString(s.Line("🔮", "[health]", name+" embedder section"))
 
 	// State line.
 	stateStr := string(r.State)
@@ -91,6 +111,8 @@ func formatEmbedderHealth(s lineSink, o EmbedderHealthCmdOutput) string {
 	// Coverage.
 	b.WriteString(fmt.Sprintf("  coverage:        %d/%d (%.1f%%)\n",
 		r.CoverageNum, r.CoverageDen, r.CoveragePct))
+	b.WriteString(fmt.Sprintf("  fresh:           %d\n", r.FreshCount))
+	b.WriteString(fmt.Sprintf("  invalid:         %d\n", r.InvalidCount))
 	b.WriteString(fmt.Sprintf("  pending:         %d\n", r.PendingCount))
 	b.WriteString(fmt.Sprintf("  stale:           %d\n", r.StaleCount))
 	b.WriteString(fmt.Sprintf("  vector_epoch:    %d\n", r.VectorEpoch))

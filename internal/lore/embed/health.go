@@ -45,9 +45,11 @@ type HealthReport struct {
 	VectorEpoch    int64
 
 	// Coverage.
-	CoverageNum int64 // count of 'indexed' entries (lore_vectors rows for current model)
-	CoverageDen int64 // count of active entries eligible for embedding
-	CoveragePct float64
+	CoverageNum  int64 // count of 'indexed' entries (lore_vectors rows for current model)
+	CoverageDen  int64 // count of active entries eligible for embedding
+	CoveragePct  float64
+	FreshCount   int64
+	InvalidCount int64
 
 	// Per-state counts.
 	PendingCount int64 // entries with vector_state = 'pending'
@@ -70,7 +72,7 @@ type healthClass int
 const (
 	healthClassHealthy     healthClass = iota // no line emitted
 	healthClassDisabled                       // embedder: disabled (reason)
-	healthClassBackfilling                    // embedder: backfilling (X%, ETA ~Ns)
+	healthClassNeedsRepair                    // embedder: repair needed
 	healthClassStale                          // embedder: stale vectors present (N rows, run ...)
 	healthClassRepeated                       // embedder: repeated write failures (N in last hour, run ...)
 )
@@ -79,10 +81,6 @@ const (
 // classify the health as "repeated failures". This is a rolling count; the
 // session-start line surfaces it so the user runs guild lore health.
 const repeatedFailureThreshold = 5
-
-// backfillCoverageThreshold is the RRF gate from ADR-003. Below this value
-// the corpus is still "backfilling" from the session-start perspective.
-const backfillCoverageThreshold = 0.90
 
 // ReadHealthReport queries the corpus's meta rows plus its entity and
 // vector tables to produce a HealthReport. The caller is responsible
@@ -172,11 +170,18 @@ func ReadHealthReport(ctx context.Context, db *sql.DB, corpus VectorCorpus) (*He
 	}
 
 	r.VectorEpoch = parseInt64(get(FieldVectorEpoch))
-	r.CoverageNum = parseInt64(get(FieldVectorCoverageNum))
-	r.CoverageDen = parseInt64(get(FieldVectorCoverageDen))
-
+	coverage, err := ReadCoverage(ctx, db, corpus, r.ModelID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("embed: health: coverage: %w", err)
+	}
+	r.CoverageNum = coverage.Valid
+	r.CoverageDen = coverage.Eligible
+	r.FreshCount = coverage.Fresh
+	r.PendingCount = coverage.Missing
+	r.StaleCount = coverage.Stale
+	r.InvalidCount = coverage.Invalid
 	if r.CoverageDen > 0 {
-		r.CoveragePct = float64(r.CoverageNum) / float64(r.CoverageDen) * 100.0
+		r.CoveragePct = float64(r.CoverageNum) / float64(r.CoverageDen) * 100
 	}
 
 	r.EmbedErrorCount = parseInt64(get(FieldEmbedErrorCount))
@@ -193,32 +198,12 @@ func ReadHealthReport(ctx context.Context, db *sql.DB, corpus VectorCorpus) (*He
 		}
 	}
 
-	// Count pending and stale entities. Corpora that don't track
-	// state (VectorStateColumn() == "") skip these queries: their
-	// health report reports zero for both counts, which is the
-	// correct answer in a no-state-tracking model.
-	if stateCol := corpus.VectorStateColumn(); stateCol != "" {
-		activePred := corpus.ActivePredicate()
-		if activePred == "" {
-			activePred = "1=1"
-		}
-		pendingQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE %s = 'pending' AND %s`, corpus.EntityTable(), stateCol, activePred) //nolint:gosec // G201: all substitutions are compile-time corpus accessors, not user input.
-		if err := db.QueryRowContext(ctx, pendingQuery).Scan(&r.PendingCount); err != nil {                                            //nolint:sqlcheck // all parts are compile-time corpus accessors.
-			slog.WarnContext(ctx, "embed: health: pending count query failed", "err", err)
-		}
-
-		staleQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE %s = 'stale' AND %s`, corpus.EntityTable(), stateCol, activePred) //nolint:gosec // G201: all substitutions are compile-time corpus accessors, not user input.
-		if err := db.QueryRowContext(ctx, staleQuery).Scan(&r.StaleCount); err != nil {                                            //nolint:sqlcheck // all parts are compile-time corpus accessors.
-			slog.WarnContext(ctx, "embed: health: stale count query failed", "err", err)
-		}
-	}
-
 	r.HealthClass = classifyHealth(r)
 	return r, nil
 }
 
 // classifyHealth derives the healthClass from a HealthReport's fields.
-// Order of precedence: disabled > repeated failures > backfilling > stale > healthy.
+// Order of precedence: disabled > repeated failures > repair needed > stale > healthy.
 func classifyHealth(r *HealthReport) healthClass {
 	if r.State != EmbedderStateEnabled {
 		return healthClassDisabled
@@ -226,12 +211,8 @@ func classifyHealth(r *HealthReport) healthClass {
 	if r.EmbedErrorCount >= repeatedFailureThreshold {
 		return healthClassRepeated
 	}
-	cov := 0.0
-	if r.CoverageDen > 0 {
-		cov = float64(r.CoverageNum) / float64(r.CoverageDen)
-	}
-	if cov < backfillCoverageThreshold && (r.PendingCount > 0 || r.CoverageDen == 0) {
-		return healthClassBackfilling
+	if r.PendingCount > 0 || r.InvalidCount > 0 {
+		return healthClassNeedsRepair
 	}
 	if r.StaleCount > 0 {
 		return healthClassStale
@@ -250,19 +231,18 @@ func (r *HealthReport) SessionLine() string {
 		}
 		return "embedder: disabled"
 
-	case healthClassBackfilling:
+	case healthClassNeedsRepair:
 		pct := 0.0
 		if r.CoverageDen > 0 {
 			pct = float64(r.CoverageNum) / float64(r.CoverageDen) * 100.0
 		}
-		eta := backfillETA(r.PendingCount)
-		return fmt.Sprintf("embedder: backfilling (coverage %.0f%%, ETA ~%s)", pct, eta)
+		return fmt.Sprintf("embedder: repair needed (coverage %.0f%%, missing %d, invalid %d, stale %d)", pct, r.PendingCount, r.InvalidCount, r.StaleCount)
 
 	case healthClassStale:
 		return fmt.Sprintf("embedder: stale vectors present (%d rows, run `guild lore embed-rebuild`)", r.StaleCount)
 
 	case healthClassRepeated:
-		return fmt.Sprintf("embedder: repeated write failures (%d in the last hour, run `guild lore health`)", r.EmbedErrorCount)
+		return fmt.Sprintf("embedder: repeated write failures (%d recorded, run `guild lore health`)", r.EmbedErrorCount)
 
 	default:
 		// healthClassHealthy: emit nothing.
@@ -314,26 +294,6 @@ func disabledReason(r *HealthReport) string {
 		return fmt.Sprintf("dylib probe failed: %s", r.LastEncodeError)
 	}
 	return ""
-}
-
-// backfillETA returns a rough ETA string for the remaining pending entries.
-// Uses the measured per-entry encode cost from the spike (18.5 ms p50 doc-embed).
-func backfillETA(pending int64) string {
-	if pending <= 0 {
-		return "0s"
-	}
-	// 18.5 ms per entry from spike measurements (ADR-003).
-	const msPerEntry = 18.5
-	totalMs := float64(pending) * msPerEntry
-	dur := time.Duration(totalMs) * time.Millisecond
-	switch {
-	case dur < time.Second:
-		return "<1s"
-	case dur < time.Minute:
-		return fmt.Sprintf("%ds", int(dur.Seconds()))
-	default:
-		return fmt.Sprintf("%dm", int(dur.Minutes()))
-	}
 }
 
 // parseInt64 parses a decimal string to int64; returns 0 on failure.
@@ -457,6 +417,9 @@ func RebuildVectors(ctx context.Context, db *sql.DB, projectID string, embedder 
 
 		// Quantize float32 -> int8.
 		blob := quantizeInt8(vec)
+		if blob == nil {
+			continue
+		}
 
 		// Compute content hash (SHA-256 of the summary text).
 		contentHash := contentHashOf(e.summary)
@@ -597,33 +560,17 @@ func isEmbedBusyErr(msg string) bool {
 		strings.Contains(msg, "database is locked")
 }
 
-// quantizeInt8 converts a float32 vector to a raw int8 blob using symmetric
-// per-vector quantization (scale = max(abs) / 127). Matches the int8
-// storage convention referenced in ADR-003.
+// quantizeInt8 applies the canonical finite, nonzero quantization contract.
 func quantizeInt8(v []float32) []byte {
-	if len(v) == 0 {
+	quant := Quantize(v)
+	if quant == nil {
 		return nil
 	}
-	maxAbs := float32(0)
-	for _, x := range v {
-		a := x
-		if a < 0 {
-			a = -a
-		}
-		if a > maxAbs {
-			maxAbs = a
-		}
+	blob := make([]byte, len(quant))
+	for i, q := range quant {
+		blob[i] = byte(q)
 	}
-	out := make([]byte, len(v))
-	if maxAbs == 0 {
-		return out
-	}
-	scale := 127.0 / maxAbs
-	for i, x := range v {
-		q := int8(x * scale)
-		out[i] = byte(q)
-	}
-	return out
+	return blob
 }
 
 // contentHashOf returns a hex-encoded SHA-256 of the text, used as the

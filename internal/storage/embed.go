@@ -5,7 +5,10 @@
 // package's migration files directly.
 package storage
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
 // migrationFS holds every *.up.sql file under migrations/, numbered
 // sequentially (001_init.up.sql, 002_*.up.sql, ...). Migrate walks this
@@ -18,3 +21,9 @@ import "embed"
 //
 //go:embed migrations/*.up.sql
 var migrationFS embed.FS
+
+// DefaultMigrationFS returns the binary's built-in shared migration corpus.
+// The legacy Migrate/MigrateTo path uses it implicitly; during the ADR-006
+// module transition a module that still wants the shared corpus can pass it
+// explicitly to MigrateFS.
+func DefaultMigrationFS() fs.FS { return migrationFS }

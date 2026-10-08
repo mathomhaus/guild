@@ -569,15 +569,7 @@ func init() {
 		newArchiveCmd(),
 		newRestoreCmd(),
 	)
-	// inquest/meld/commune/catalog migrated to registry; registered via
-	// bindLoreRegistryVerb in lore_write.go or lore_read.go.
-	deps := buildCLILoreDeps()
-	bindLoreRegistryVerb(loreCmd, lore.InquestCommand, deps, "lore inquest")
-	bindLoreRegistryVerb(loreCmd, lore.MeldCommand, deps, "lore meld")
-	bindLoreRegistryVerb(loreCmd, lore.CommuneCommand, deps, "lore commune")
-	// Embedder health and rebuild verbs (Phase 1.6 ADR-003).
-	bindLoreRegistryVerb(loreCmd, lore.EmbedderHealthCommand, deps, "lore health")
-	bindLoreRegistryVerb(loreCmd, lore.EmbedRebuildCommand, deps, "lore embed-rebuild")
-	// Coverage denominator reconcile (QUEST-220 / LORE-373).
-	bindLoreRegistryVerb(loreCmd, lore.CoverageReconcileCommand, deps, "lore coverage-reconcile")
+	// inquest/meld/commune/catalog and the embedder-health verbs are
+	// registry-generated and bound by the module-registry loop
+	// (bindModuleVerbs in modules.go).
 }

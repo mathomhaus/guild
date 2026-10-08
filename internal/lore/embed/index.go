@@ -118,6 +118,11 @@ type Index struct {
 	// whether to reload.
 	cachedEpoch int64
 
+	// needsReload marks an observed epoch gap: a local splice cannot prove
+	// that intervening external writes are installed. Only a complete DB
+	// snapshot clears this flag.
+	needsReload bool
+
 	// loaded flips true after the first successful LoadFromDB. A
 	// zero-row load still counts as loaded (legitimate empty corpus).
 	loaded bool
@@ -212,13 +217,21 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, errors.New("embed/index: LoadFromDB: nil corpus")
 	}
 
+	// Read identity, epoch and vectors from one SQLite snapshot. Otherwise a
+	// row newer than the epoch can be stamped with an older per-slot version.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return 0, fmt.Errorf("embed/index: begin snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// Read the canonical model_id from meta first. If it disagrees
 	// with the bound model_id, the whole corpus is mismatched and
 	// the caller needs to know; return ErrModelMismatch without
 	// clobbering the existing index. The meta key is resolved via
 	// the corpus adapter so a non-lore corpus looks up its own row.
 	var metaModelID string
-	err := db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT value FROM meta WHERE key = ?`,
 		i.corpus.MetaKey(FieldEmbedderModelID),
 	).Scan(&metaModelID)
@@ -240,13 +253,10 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		}
 	}
 
-	// Read the epoch BEFORE scanning rows so it is a lower bound for
-	// the snapshot: every commit visible to the SELECT below happened
-	// at or after this epoch. Reading it after the scan inverts that
-	// bound and lets a concurrent writer's commit land between the two
-	// reads, stamping a pre-commit row snapshot with a post-commit
-	// epoch; CheckAndReload then trusts the stale snapshot forever.
-	epoch, err := readEpoch(ctx, db, i.corpus.MetaKey(FieldVectorEpoch))
+	// The epoch and row scan share the read transaction, so every slot is
+	// stamped with the exact epoch of its snapshot. A later out-of-order
+	// splice can then be compared with that per-slot version safely.
+	epoch, err := readEpoch(ctx, tx, i.corpus.MetaKey(FieldVectorEpoch))
 	if err != nil {
 		return 0, err
 	}
@@ -260,8 +270,8 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	// never from user input. Query parameters still flow through the
 	// driver's placeholder substitution. gosec G201 fires on any SQL
 	// Sprintf so we suppress it locally.
-	query := fmt.Sprintf(`SELECT entry_id, vec FROM %s WHERE model_id = ? ORDER BY entry_id`, i.corpus.VectorTable()) //nolint:gosec // G201: table name is a compile-time constant from the corpus adapter, not user input.
-	rows, err := db.QueryContext(ctx, query, i.modelID)                                                               //nolint:sqlcheck // query templated from compile-time corpus.VectorTable(), not user input; ? placeholders preserved.
+	query := fmt.Sprintf(`SELECT v.entry_id, v.vec FROM %s v JOIN %s e ON e.%s=v.entry_id WHERE v.model_id = ? AND v.dim=384 AND e.%s ORDER BY v.entry_id`, i.corpus.VectorTable(), i.corpus.EntityTable(), i.corpus.EntityIDColumn(), i.corpus.ActivePredicate()) //nolint:gosec // G201: table name is a compile-time constant from the corpus adapter, not user input.
+	rows, err := tx.QueryContext(ctx, query, i.modelID)                                                                                                                                                                                                            //nolint:sqlcheck // query templated from compile-time corpus.VectorTable(), not user input; ? placeholders preserved.
 	if err != nil {
 		return 0, fmt.Errorf("embed/index: SELECT %s: %w", i.corpus.VectorTable(), err)
 	}
@@ -310,13 +320,19 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, fmt.Errorf("embed/index: iterate %s: %w", i.corpus.VectorTable(), err)
 	}
 
+	_ = rows.Close()
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("embed/index: commit snapshot: %w", err)
+	}
+
 	i.bindMu.Lock()
 	if i.loaded && epoch < i.cachedEpoch {
 		// A concurrent Splice advanced the index past this snapshot
 		// (its writer committed after our epoch read). Installing the
 		// snapshot would silently drop that newer vector. Discard;
-		// the in-memory state is already at least as fresh as the DB
-		// state this load observed.
+		// preserve the newer slots, but mark the index dirty: it may still
+		// be missing unrelated changes from another writer.
+		i.needsReload = true
 		cached := i.cachedEpoch
 		i.bindMu.Unlock()
 		i.logger.Debug("embed/index: discarded stale load snapshot",
@@ -335,6 +351,7 @@ func (i *Index) LoadFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	i.byEntry = newByID
 	i.epochs = newEpochs
 	i.cachedEpoch = epoch
+	i.needsReload = false
 	i.loaded = true
 	i.bindMu.Unlock()
 
@@ -372,9 +389,10 @@ func (i *Index) CheckAndReload(ctx context.Context, db *sql.DB) (bool, error) {
 	i.bindMu.RLock()
 	cached := i.cachedEpoch
 	loaded := i.loaded
+	needsReload := i.needsReload
 	i.bindMu.RUnlock()
 
-	if loaded && epoch == cached {
+	if loaded && !needsReload && epoch == cached {
 		return false, nil
 	}
 
@@ -382,11 +400,17 @@ func (i *Index) CheckAndReload(ctx context.Context, db *sql.DB) (bool, error) {
 	if _, err := i.LoadFromDB(ctx, db); err != nil {
 		return false, err
 	}
+	i.bindMu.RLock()
+	dirty := i.needsReload
+	i.bindMu.RUnlock()
+	if dirty {
+		return false, ErrIndexStale
+	}
 	return true, nil
 }
 
 // Splice updates or inserts a single vector under the write lock and
-// advances cachedEpoch to newEpoch when newEpoch is larger. Used by
+// advances the observed epoch and marks any gap for a full reload. Used by
 // the Tx2 writer path so the writer process does not have to
 // round-trip through LoadFromDB after a successful inscribe.
 //
@@ -429,12 +453,15 @@ func (i *Index) Splice(entryID int64, vec []int8, newEpoch int64) error {
 		i.epochs = append(i.epochs, newEpoch)
 		i.byEntry[entryID] = slot
 	}
+	if !i.loaded || newEpoch > i.cachedEpoch+1 {
+		i.needsReload = true
+	}
 	if newEpoch > i.cachedEpoch {
 		i.cachedEpoch = newEpoch
 	}
 	// A Splice on an unloaded index flips loaded=true: the caller is
-	// asserting the row is canonical, so subsequent CheckAndReload
-	// calls can trust the cached epoch rather than forcing a reload.
+	// asserting the row is canonical. The partial index remains marked
+	// for reload because one row cannot prove the rest of the DB is loaded.
 	i.loaded = true
 	return nil
 }
@@ -453,6 +480,12 @@ func (i *Index) Splice(entryID int64, vec []int8, newEpoch int64) error {
 // loaded. Returns ErrIndexStale when LoadFromDB has not run. Returns
 // ErrQueryShape on bad qvec length.
 func (i *Index) TopK(qvec []int8, k int) ([]ScoredEntry, error) {
+	return i.TopKFiltered(qvec, k, nil)
+}
+
+// TopKFiltered applies eligibility before scoring and limiting candidates.
+// The callback must not mutate the index; nil permits every indexed ID.
+func (i *Index) TopKFiltered(qvec []int8, k int, allowed func(int64) bool) ([]ScoredEntry, error) {
 	if len(qvec) != VecDim {
 		return nil, ErrQueryShape
 	}
@@ -463,7 +496,7 @@ func (i *Index) TopK(qvec []int8, k int) ([]ScoredEntry, error) {
 	i.bindMu.RLock()
 	defer i.bindMu.RUnlock()
 
-	if !i.loaded {
+	if !i.loaded || i.needsReload {
 		return nil, ErrIndexStale
 	}
 	n := len(i.vectors)
@@ -479,12 +512,15 @@ func (i *Index) TopK(qvec []int8, k int) ([]ScoredEntry, error) {
 	// bandwidth-bound, not compute-bound, so a heap-based top-k
 	// prune does not materially beat "score all then partial sort"
 	// until the corpus is substantially larger. Revisit if ever.
-	scores := make([]ScoredEntry, n)
+	scores := make([]ScoredEntry, 0, n)
 	for j := 0; j < n; j++ {
-		scores[j] = ScoredEntry{
+		if allowed != nil && !allowed(i.entries[j]) {
+			continue
+		}
+		scores = append(scores, ScoredEntry{
 			EntryID: i.entries[j],
 			Score:   cosineInt8(qvec, i.vectors[j]),
-		}
+		})
 	}
 
 	// Partial sort: we only need the top k. sort.Slice with a
@@ -500,6 +536,9 @@ func (i *Index) TopK(qvec []int8, k int) ([]ScoredEntry, error) {
 		// the RRF merge downstream).
 		return scores[a].EntryID < scores[b].EntryID
 	})
+	if k > len(scores) {
+		k = len(scores)
+	}
 	return scores[:k], nil
 }
 
@@ -510,7 +549,9 @@ func (i *Index) TopK(qvec []int8, k int) ([]ScoredEntry, error) {
 //
 // key is the corpus-resolved meta key (LoreCorpus uses 'vector_epoch';
 // future corpora may use 'quest.vector_epoch' etc.).
-func readEpoch(ctx context.Context, db *sql.DB, key string) (int64, error) {
+func readEpoch(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, key string) (int64, error) {
 	var s string
 	err := db.QueryRowContext(ctx,
 		`SELECT value FROM meta WHERE key = ?`, key,

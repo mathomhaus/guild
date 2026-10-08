@@ -142,6 +142,9 @@ var PostCommand = &command.Command[PostInput, PostOutput]{
 				Topic:      topic,
 				PromptedBy: q.ID,
 				NoWarn:     true, // suppress principle-bloat warning (not a principle)
+				// Spec entries decay like any other decision entry, so
+				// honor the configured per-kind window here too.
+				ValidDaysByKind: d.ResolveLoreValidDays(),
 			})
 			if inscribeErr != nil {
 				return PostOutput{}, fmt.Errorf("quest: post: inscribe spec: %w", inscribeErr)

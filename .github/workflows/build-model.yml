@@ -34,6 +34,9 @@ on:
         type: string
         default: ''
   push:
+    # GitHub does not apply path filters to tags. Explicit branches suppress
+    # both product and model tag pushes while preserving recipe branch builds.
+    branches: ["**"]
     paths:
       - 'recipe/**'
   schedule:

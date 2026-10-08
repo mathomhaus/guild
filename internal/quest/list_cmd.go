@@ -23,6 +23,13 @@ type ListOutput struct {
 	In     ListInput `json:"-"`
 }
 
+// RestoreInput re-attaches the CLI-only render switches (In.Files,
+// In.Deps) that the `json:"-"` tag drops across the daemon's JSON-exec
+// round trip. The cobra adapter calls this with the locally-parsed
+// input so a routed `quest list --files` renders the same table a
+// direct run would. See command.InputRestorer.
+func (o *ListOutput) RestoreInput(in ListInput) { o.In = in }
+
 var ListCommand = &command.Command[ListInput, ListOutput]{
 	Name:    "quest_list",
 	CLIPath: []string{"quest", "list"},

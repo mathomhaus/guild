@@ -15,6 +15,12 @@ const (
 	NotePrefixRework      = "[rework] of: "
 	NotePrefixCheckpoint  = "[checkpoint] "
 	NotePrefixCompleted   = "[completed] "
+	// NotePrefixRenewal marks a quest as the renewal quest for one lore
+	// entry ("[renewal] entry: ENTRY-N"). PostRenewals writes it in the
+	// same transaction as the post and its dedupe scan matches the full
+	// note byte-for-byte, so an open quest carrying the marker blocks a
+	// second renewal post for the same entry.
+	NotePrefixRenewal = "[renewal] entry: "
 )
 
 // Event kinds — the enum column `event` in task_events. Writers (Post,
@@ -29,6 +35,12 @@ const (
 	EventDone         = "done"
 	EventUnblocked    = "unblocked"
 	EventPMNextCalled = "pm_next_called"
+	// EventReleased marks a claim returned to the board: a user forfeit or
+	// a daemon reaper auto-forfeit of a lapsed lease both emit it. The value
+	// stays exactly "released" because Forfeit has persisted that literal
+	// string since before this constant existed; scroll and pulse readers
+	// filter on it, so changing the value would orphan every historical row.
+	EventReleased = "released"
 )
 
 // IsSystemNote reports whether the given note string begins with any known
@@ -43,6 +55,7 @@ func IsSystemNote(note string) bool {
 		NotePrefixRework,
 		NotePrefixCheckpoint,
 		NotePrefixCompleted,
+		NotePrefixRenewal,
 	} {
 		if strings.HasPrefix(note, p) {
 			return true

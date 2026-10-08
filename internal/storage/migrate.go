@@ -68,7 +68,32 @@ func MigrateTo(ctx context.Context, db *sql.DB, scope string, out io.Writer) err
 	return migrateImpl(ctx, db, scope, out)
 }
 
+// MigrateFS is the module-facing variant (ADR-006): it applies the migration
+// corpus embedded in fsys to db, rather than the binary's built-in shared
+// corpus. fsys must contain a top-level "migrations/" directory of
+// NNN_description.up.sql files — the same convention every module's
+// //go:embed migrations/*.up.sql produces. Because each module passes its
+// own fsys (and opens its own DB), a module's tables land only in that
+// module's database instead of leaking into a shared corpus. scope is the
+// log-line prefix (pass the module/db name); out receives the 🔧 upgrade
+// notices (nil is treated as io.Discard).
+func MigrateFS(ctx context.Context, db *sql.DB, fsys fs.FS, scope string, out io.Writer) error {
+	if out == nil {
+		out = io.Discard
+	}
+	return migrateImplFS(ctx, db, fsys, scope, out)
+}
+
 func migrateImpl(ctx context.Context, db *sql.DB, scope string, out io.Writer) error {
+	return migrateImplFS(ctx, db, currentMigrationFS, scope, out)
+}
+
+// migrateImplFS is the core runner: it applies every pending migration from
+// fsys (which must hold a top-level "migrations/" directory) to db. The fsys
+// parameter is what lets each module own its corpus (ADR-006); the legacy
+// Migrate/MigrateTo path passes currentMigrationFS for byte-identical
+// behavior.
+func migrateImplFS(ctx context.Context, db *sql.DB, fsys fs.FS, scope string, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
 	}
@@ -77,7 +102,7 @@ func migrateImpl(ctx context.Context, db *sql.DB, scope string, out io.Writer) e
 		return fmt.Errorf("storage: migrate: create schema_migrations: %w", err)
 	}
 
-	migrations, err := loadMigrations()
+	migrations, err := loadMigrationsFS(fsys)
 	if err != nil {
 		return fmt.Errorf("storage: migrate: load migrations: %w", err)
 	}
@@ -91,7 +116,7 @@ func migrateImpl(ctx context.Context, db *sql.DB, scope string, out io.Writer) e
 		if applied[m.version] {
 			continue
 		}
-		if err := applyOne(ctx, db, m); err != nil {
+		if err := applyOneFS(ctx, db, fsys, m); err != nil {
 			return err
 		}
 		// Emit the one-time upgrade line. This fires exactly once per
@@ -149,7 +174,13 @@ var currentMigrationFS fs.FS = migrationFS
 // sorted by version. It is deterministic: same embedded corpus -> same
 // slice.
 func loadMigrations() ([]migration, error) {
-	entries, err := fs.ReadDir(currentMigrationFS, "migrations")
+	return loadMigrationsFS(currentMigrationFS)
+}
+
+// loadMigrationsFS walks fsys's "migrations/" directory and returns the
+// migrations sorted by version. Deterministic: same corpus -> same slice.
+func loadMigrationsFS(fsys fs.FS) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, "migrations")
 	if err != nil {
 		return nil, fmt.Errorf("read embedded migrations dir: %w", err)
 	}
@@ -191,7 +222,14 @@ func loadMigrations() ([]migration, error) {
 // transaction and records the version in schema_migrations. Either all
 // statements land or none do — SQLite rolls the whole tx back on error.
 func applyOne(ctx context.Context, db *sql.DB, m migration) error {
-	raw, err := fs.ReadFile(currentMigrationFS, "migrations/"+m.filename)
+	return applyOneFS(ctx, db, currentMigrationFS, m)
+}
+
+// applyOneFS executes migration m, read from fsys, inside a single
+// transaction and records its version. applyOne is the legacy
+// currentMigrationFS-bound wrapper.
+func applyOneFS(ctx context.Context, db *sql.DB, fsys fs.FS, m migration) error {
+	raw, err := fs.ReadFile(fsys, "migrations/"+m.filename)
 	if err != nil {
 		return fmt.Errorf("storage: migrate: read %s: %w", m.filename, err)
 	}
@@ -202,6 +240,33 @@ func applyOne(ctx context.Context, db *sql.DB, m migration) error {
 	}
 	// Rollback is a no-op if Commit already ran; safe to always-defer.
 	defer func() { _ = tx.Rollback() }()
+
+	// Acquire SQLite's writer lock before reading the version. A deferred
+	// transaction that reads first cannot safely upgrade its snapshot when
+	// another process migrates concurrently.
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_migrations SET version = version WHERE 0`); err != nil {
+		return fmt.Errorf("storage: migrate: lock version %d: %w", m.version, err)
+	}
+	var recorded int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version).Scan(&recorded); err != nil {
+		return err
+	}
+	if recorded != 0 {
+		return tx.Commit()
+	}
+
+	// Version 009 historically meant either body or sleep journal. Version
+	// 012 converges the body schema without rewriting that audit history or
+	// treating a duplicate-column error as a general migration success.
+	if m.filename == "012_lore_body.up.sql" {
+		var present int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('entries') WHERE name = 'body'`).Scan(&present); err != nil {
+			return err
+		}
+		if present != 0 {
+			raw = nil
+		}
+	}
 
 	for i, stmt := range splitStatements(string(raw)) {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {

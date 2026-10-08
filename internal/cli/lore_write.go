@@ -156,19 +156,9 @@ func newAliasCmd(alias, canonical string, target *cobra.Command) *cobra.Command 
 
 func init() {
 	// inscribe/update/seal/link/reforge flags live on their registry
-	// specs (QUEST-45).
+	// specs (QUEST-45). The registry-generated lore write verbs are bound
+	// by the module-registry loop (bindModuleVerbs in modules.go).
 	loreCmd.AddCommand(
 		loreInitCmd,
 	)
-
-	// Registry-migrated lore write verbs. See accompanying specs in
-	// internal/lore/<verb>_cmd.go.
-	deps := buildCLILoreDeps()
-	bindLoreRegistryVerb(loreCmd, lore.InscribeCommand, deps, "lore inscribe")
-	bindLoreRegistryVerb(loreCmd, lore.UpdateCommand, deps, "lore update")
-	bindLoreRegistryVerb(loreCmd, lore.CatalogCommand, deps, "lore catalog")
-	bindLoreRegistryVerb(loreCmd, lore.SealCommand, deps, "lore seal")
-	bindLoreRegistryVerb(loreCmd, lore.LinkCommand, deps, "lore link")
-	bindLoreRegistryVerb(loreCmd, lore.UnlinkCommand, deps, "lore unlink")
-	bindLoreRegistryVerb(loreCmd, lore.ReforgeCommand, deps, "lore reforge")
 }

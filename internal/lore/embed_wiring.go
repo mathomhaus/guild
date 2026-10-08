@@ -26,13 +26,28 @@ type EmbedWireOptions struct {
 	Async bool
 	// LoadIndex, when true, eagerly reads lore_vectors into a
 	// per-process Index at wire time. MCP startup sets true (paid
-	// once; every appraise reuses it). CLI bootstrap sets false to
-	// avoid the 10-50 ms scan on every short-lived invocation; CLI
-	// appraise falls through to BM25-only unless the caller opts in.
+	// once; every appraise reuses it). CLI appraise also sets true:
+	// semantic search requires an index. CLI write bootstrap sets false
+	// because those handlers only write vectors.
 	LoadIndex bool
 	// Logger receives one-line diagnostics: wired state + reasons.
 	// Nil uses slog.Default.
 	Logger *slog.Logger
+
+	// Backend selects the embedder by name from the internal/lore/embed
+	// registry (ADR-006 Phase 4, [embed].backend). The ZERO VALUE (empty
+	// string) is the default local BGE path: when Backend is empty or
+	// "local-bge", WireEmbedDeps runs the existing byte-identical
+	// construction (state gate, warm-start, PrepareAndProbe, index load)
+	// unchanged. A non-default name routes construction through
+	// embed.BuildEmbedder instead, so alternate backends only engage when
+	// config selects them. Every pre-Phase-4 caller leaves this empty and
+	// observes identical behavior.
+	Backend string
+	// Model is the optional model identifier handed to a non-default
+	// backend factory. Ignored by the local BGE path (its model is pinned
+	// by the bundled manifest).
+	Model string
 }
 
 // WireEmbedStatus is the structured diagnostic the adapter layer
@@ -104,6 +119,16 @@ func WireEmbedDeps(ctx context.Context, db *sql.DB, opts EmbedWireOptions) (*Emb
 		return nil, WireEmbedStatus{Reason: "meta_not_enabled", ModelID: modelID}, nil
 	}
 
+	// Alternate-backend branch (ADR-006 Phase 4). When config selects a
+	// non-default [embed].backend, construction routes through the name-keyed
+	// registry instead of the local BGE manifest/probe path below. The
+	// default path (Backend empty or "local-bge") falls through to the
+	// existing byte-identical construction untouched, so this branch is
+	// purely additive and engages only when an alternate backend is named.
+	if !embed.IsDefaultBackend(opts.Backend) {
+		return wireAlternateBackend(ctx, db, opts, modelID, logger)
+	}
+
 	man := embed.CurrentManifest()
 	if !embed.HasAssets() {
 		// The binary was built without -tags=withembed; nothing to
@@ -167,9 +192,9 @@ func WireEmbedDeps(ctx context.Context, db *sql.DB, opts EmbedWireOptions) (*Emb
 
 	// Index construction. LoadFromDB is cheap per the ADR-003 10 ms/1k
 	// rows bench budget, but paying it on every CLI invocation is
-	// pure overhead for the short-lived process. Callers set
-	// LoadIndex=true only when they expect the index to be reused
-	// across many calls (the MCP server).
+	// unnecessary overhead for write-only processes. Search callers set
+	// LoadIndex=true even for a single CLI query; there is no SQL TopK
+	// alternative when Index is nil.
 	var idx *embed.Index
 	indexLen := 0
 	if opts.LoadIndex {
@@ -177,10 +202,8 @@ func WireEmbedDeps(ctx context.Context, db *sql.DB, opts EmbedWireOptions) (*Emb
 		n, lerr := idx.LoadFromDB(ctx, db)
 		if lerr != nil {
 			// Fail safe: log and continue without the index. The
-			// Appraise path still runs the RRF arm via live
-			// embedding + per-call vector lookup; it just loses the
-			// in-memory TopK acceleration. This is better than
-			// failing startup.
+			// Appraise path falls back to lexical retrieval without
+			// a usable index. This is better than failing startup.
 			logger.Warn("embedder inactive: index load failed",
 				slog.String("err", lerr.Error()),
 				slog.String("model_id", boundModelID),
@@ -202,6 +225,86 @@ func WireEmbedDeps(ctx context.Context, db *sql.DB, opts EmbedWireOptions) (*Emb
 		Wired:    true,
 		Reason:   "enabled",
 		ModelID:  boundModelID,
+		IndexLen: indexLen,
+	}, nil
+}
+
+// wireAlternateBackend constructs the *EmbedDeps for a non-default
+// [embed].backend (ADR-006 Phase 4). It is reached only from WireEmbedDeps
+// after the meta.embedder_state gate passes AND the backend name is not the
+// default local BGE path, so it never runs on the byte-identical default.
+//
+// Construction goes through embed.BuildEmbedder (the name-keyed registry).
+// The alternate backend has no bundled-asset manifest or probe contract, so
+// this path skips the local-only manifest/HasAssets/probe checks; the registry
+// factory owns whatever validation its backend needs and returns an error on
+// failure, which WireEmbedDeps surfaces as the BM25-only fallback per ADR-003.
+//
+// Model identity: an alternate backend's model_id comes from config
+// (opts.Model), falling back to meta.embedder_model_id when config is silent,
+// so the vector-write guard and the index still have a stable model key.
+func wireAlternateBackend(ctx context.Context, db *sql.DB, opts EmbedWireOptions, metaModelID string, logger *slog.Logger) (*EmbedDeps, WireEmbedStatus, error) {
+	emb, err := embed.BuildEmbedder(embed.EmbedConfig{
+		Backend: opts.Backend,
+		Model:   opts.Model,
+	})
+	if err != nil {
+		// Construction failed (unknown backend, missing credentials, etc.).
+		// Fall back to BM25-only exactly like the local-path failure modes;
+		// startup never fails just because the embedder is off.
+		logger.Warn("embedder inactive: alternate backend build failed",
+			slog.String("backend", opts.Backend),
+			slog.String("err", err.Error()),
+		)
+		return nil, WireEmbedStatus{Reason: "embedder_init_failed", ModelID: metaModelID}, nil
+	}
+
+	modelID := opts.Model
+	if modelID == "" {
+		modelID = metaModelID
+	}
+	if modelID == "" {
+		// A vector write needs a stable model key to gate against; without
+		// one the safest behavior is BM25-only (matches EmbedDeps.Enabled,
+		// which treats an empty ModelID as disabled).
+		logger.Warn("embedder inactive: alternate backend has no model id",
+			slog.String("backend", opts.Backend),
+		)
+		return nil, WireEmbedStatus{Reason: "embedder_init_failed"}, nil
+	}
+
+	var idx *embed.Index
+	indexLen := 0
+	if opts.LoadIndex {
+		idx = embed.NewIndex(embed.LoreCorpus{}, modelID, embed.WithLogger(logger))
+		n, lerr := idx.LoadFromDB(ctx, db)
+		if lerr != nil {
+			logger.Warn("embedder inactive: alternate backend index load failed",
+				slog.String("backend", opts.Backend),
+				slog.String("err", lerr.Error()),
+				slog.String("model_id", modelID),
+			)
+			return nil, WireEmbedStatus{Reason: "index_load_failed", ModelID: modelID}, nil
+		}
+		indexLen = n
+	}
+
+	deps := &EmbedDeps{
+		Embedder: emb,
+		Index:    idx,
+		ModelID:  modelID,
+		Async:    opts.Async,
+		Logger:   logger,
+	}
+	logger.Info("embedder wired via alternate backend",
+		slog.String("backend", opts.Backend),
+		slog.String("model_id", modelID),
+		slog.Int("index_len", indexLen),
+	)
+	return deps, WireEmbedStatus{
+		Wired:    true,
+		Reason:   "enabled",
+		ModelID:  modelID,
 		IndexLen: indexLen,
 	}, nil
 }

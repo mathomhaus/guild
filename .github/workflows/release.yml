@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
       - name: Test
         run: go test -race -count=1 ./...
@@ -65,7 +65,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           # Must match go.mod directive. Update together.
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
 
       # Install cosign for keyless signing. The version pin avoids surprises
@@ -97,18 +97,23 @@ jobs:
             --pattern model.onnx \
             --pattern vocab.txt \
             --pattern tokenizer.json \
+            --pattern MANIFEST.txt \
             --dir workspace/staging
+          .github/scripts/verify-model-assets.sh workspace/staging
           ASSETS_SPIKE_DIR=workspace/staging make assets-model
 
-      # goreleaser-action v6 supports goreleaser v2 natively.
+      - name: Exclude model tags from binary release version detection
+        run: .github/scripts/goreleaser-config.sh .goreleaser.yml workspace/goreleaser.yml
+
+      # Pin the same GoReleaser version used by local packaging validation.
       # CGO_ENABLED=0 is set in .goreleaser.yml; repeating it here is
       # belt-and-suspenders to make the intent explicit in CI logs.
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
+          version: "v2.15.3"
+          args: release --clean --config workspace/goreleaser.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # PAT with Contents:write on github.com/mathomhaus/homebrew-tap.

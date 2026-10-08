@@ -36,8 +36,8 @@ const VecDim = Dim
 // Quantize converts a float32 vector of length VecDim into its canonical
 // int8 form. Inputs that are not unit-norm are still quantized, but
 // components outside [-1, 1] are clipped to [-128, 127]. Returns nil
-// if len(v) != VecDim so callers can treat "wrong shape" as an error
-// at a single call site.
+// for wrong shape, any NaN or infinity, or an all-zero quantized result.
+// These inputs cannot produce a meaningful semantic ranking.
 //
 // The output is a freshly allocated slice; the caller owns it.
 func Quantize(v []float32) []int8 {
@@ -45,7 +45,11 @@ func Quantize(v []float32) []int8 {
 		return nil
 	}
 	out := make([]int8, VecDim)
+	nonzero := false
 	for i, x := range v {
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return nil
+		}
 		// round-half-away-from-zero via math.Round. Float64 promotion
 		// keeps the multiply precise on values near the clamp edges;
 		// float32 arithmetic accumulates enough error here to flip a
@@ -59,6 +63,12 @@ func Quantize(v []float32) []int8 {
 		default:
 			out[i] = int8(s)
 		}
+		if out[i] != 0 {
+			nonzero = true
+		}
+	}
+	if !nonzero {
+		return nil
 	}
 	return out
 }

@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "probes": [
+    {
+      "probe": "dedup",
+      "query": "cross-project dedup title fts before insert",
+      "rows": [
+        {
+          "rank": 1,
+          "slug": "benign-dedup",
+          "score": 2.313175
+        },
+        {
+          "rank": 2,
+          "slug": "poison-dedup-neardup",
+          "score": 1.838142
+        },
+        {
+          "rank": 3,
+          "slug": "poison-dedup-injection",
+          "score": 1.31354
+        },
+        {
+          "rank": 4,
+          "slug": "poison-dedup-stuff",
+          "score": 1.296881
+        },
+        {
+          "rank": 5,
+          "slug": "filler-session",
+          "score": 0.189629
+        }
+      ]
+    },
+    {
+      "probe": "recency",
+      "query": "recency decay half-life scoring",
+      "rows": [
+        {
+          "rank": 1,
+          "slug": "poison-recency-stuff",
+          "score": 1.534148
+        },
+        {
+          "rank": 2,
+          "slug": "benign-recency",
+          "score": 1.457144
+        },
+        {
+          "rank": 3,
+          "slug": "poison-recency-injection",
+          "score": 1.407154
+        }
+      ]
+    },
+    {
+      "probe": "lease",
+      "query": "lease reaper forfeits zombie quest claims",
+      "rows": [
+        {
+          "rank": 1,
+          "slug": "benign-lease",
+          "score": 2.807343
+        },
+        {
+          "rank": 2,
+          "slug": "poison-lease-stuff",
+          "score": 1.756557
+        }
+      ]
+    }
+  ]
+}

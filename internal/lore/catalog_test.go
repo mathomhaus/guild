@@ -214,3 +214,41 @@ func TestCatalog_NonExistentDir(t *testing.T) {
 		t.Error("Catalog on non-existent dir should return error")
 	}
 }
+
+// TestCatalog_ValidDaysByKind verifies the catalog import path stamps
+// valid_days from the configured per-kind window, same source as
+// Inscribe.
+func TestCatalog_ValidDaysByKind(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t, "catalog-proj")
+
+	dir := t.TempDir()
+	content := "# Note\n\nA paragraph with enough words to become the imported summary text."
+	if err := os.WriteFile(filepath.Join(dir, "window-note.md"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write note: %v", err)
+	}
+
+	result, err := Catalog(ctx, db, &CatalogParams{
+		Dir:             dir,
+		ProjectID:       "catalog-proj",
+		Kind:            KindResearch,
+		ValidDaysByKind: map[string]int{"research": 2},
+	})
+	if err != nil {
+		t.Fatalf("Catalog: %v", err)
+	}
+	if result.Imported != 1 {
+		t.Fatalf("Imported = %d; want 1", result.Imported)
+	}
+
+	var validDays int
+	err = db.QueryRowContext(ctx,
+		`SELECT valid_days FROM entries WHERE project_id = ?`, "catalog-proj",
+	).Scan(&validDays)
+	if err != nil {
+		t.Fatalf("query valid_days: %v", err)
+	}
+	if validDays != 2 {
+		t.Errorf("valid_days = %d; want 2 (configured research window)", validDays)
+	}
+}

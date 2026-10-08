@@ -209,3 +209,25 @@ func deterministicUnitVec(seed int64) []float32 {
 	}
 	return v
 }
+
+func TestQuantizeRejectsUnusableVectors(t *testing.T) {
+	for _, name := range []string{"zero", "rounds-to-zero", "nan", "positive-infinity", "negative-infinity"} {
+		t.Run(name, func(t *testing.T) {
+			vec := make([]float32, VecDim)
+			switch name {
+			case "rounds-to-zero":
+				vec[0] = 0.001
+			case "nan":
+				vec[0] = 1
+				vec[1] = float32(math.NaN())
+			case "positive-infinity":
+				vec[0] = float32(math.Inf(1))
+			case "negative-infinity":
+				vec[0] = float32(math.Inf(-1))
+			}
+			if Quantize(vec) != nil {
+				t.Fatal("unusable input accepted")
+			}
+		})
+	}
+}

@@ -34,6 +34,14 @@ func isolateHome(t *testing.T) string {
 	return dir
 }
 
+// newTestCore builds the core the direct handler-invocation tests use:
+// process-default session store plus a fresh, untracked provider
+// bundle. Mirrors what a default registration hands its handlers
+// without mutating the package-level default-bundle tracker.
+func newTestCore() *serverCore {
+	return &serverCore{sessions: processSessionStore{}, providers: NewProviders()}
+}
+
 // connectInMemory wires an in-memory server+client pair through the
 // SDK's InMemoryTransports. Returns both sessions and a cleanup func
 // that closes them in the right order (client first, then wait server)

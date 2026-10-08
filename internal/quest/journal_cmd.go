@@ -80,6 +80,10 @@ var JournalCommand = &command.Command[JournalInput, JournalOutput]{
 		if err := Journal(ctx, db, pid, in.QuestID, agent, in.Text); err != nil {
 			return JournalOutput{}, err
 		}
+		// Activity renewal: a daemon-mediated journal write on a quest this
+		// session leased refreshes that lease. No-op without a daemon (nil
+		// seam), so the no-daemon path stays byte-identical.
+		renewLeaseActivity(ctx, d, pid, in.QuestID)
 		return JournalOutput{QuestID: in.QuestID}, nil
 	},
 	CLIFormat:      func(s command.CLISink, o JournalOutput) string { return formatJournaled(s, o) },

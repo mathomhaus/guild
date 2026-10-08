@@ -37,11 +37,11 @@ var questBountiesTool = &sdkmcp.Tool{
 	Description: "On-demand session snapshot: brief, oath, echoes, top task, and parallel candidates.",
 }
 
-func registerQuestBounties(s *sdkmcp.Server) {
-	sdkmcp.AddTool(s, questBountiesTool, handleQuestBounties)
+func (c *serverCore) registerQuestBounties(s *sdkmcp.Server) {
+	sdkmcp.AddTool(s, questBountiesTool, c.handleQuestBounties)
 }
 
-func handleQuestBounties(
+func (c *serverCore) handleQuestBounties(
 	ctx context.Context,
 	_ *sdkmcp.CallToolRequest,
 	in questBountiesInput,
@@ -50,10 +50,10 @@ func handleQuestBounties(
 	var handlerErr error
 	var respBytes uint
 	//nolint:gocritic // ptrToRefParam — defer reads late-bound values
-	defer recordMCPTelemetry(ctx, "quest_bounties", start, &handlerErr, &respBytes)
-	hintsRecordBootstrap("quest_bounties")
+	defer c.recordMCPTelemetry(ctx, "quest_bounties", start, &handlerErr, &respBytes)
+	c.providers.recordHintsBootstrap("quest_bounties")
 
-	pid, err := resolveProject(ctx, in.Project)
+	pid, err := c.resolveProject(ctx, in.Project)
 	if err != nil {
 		handlerErr = err
 		return toolErrorf("%s", err), nil, nil

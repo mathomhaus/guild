@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -23,10 +24,12 @@ import (
 // direct edits to instructions.md do. See QUEST-57 for the dynamic
 // build path and its separate tests.
 //
-// Last updated for QUEST-243: added lore_unlink(from_id=..., to_id=...) to the
-// canonical invocation examples section so doc-coverage passes for the
-// new provenance edge removal tool (LORE-401).
-const wantStaticSHA = "3612ee1770080d0382887a60530cc138f90d26d2974ed434feeeb6f3c419d7e4"
+// Last updated when instructions.md was reordered so its first 2,048
+// bytes carry the load-bearing contract (session_start mandate, core
+// loop, worked demonstrations). Hosts that truncate
+// initialize.instructions deliver only that prefix;
+// TestInstructionsFirst2KB gates its composition.
+const wantStaticSHA = "8248295e193d5defa541e5c91e029bd54e2eccc93e04077981cb43d88f08a543"
 
 func TestStaticInstructions_Embedded(t *testing.T) {
 	if staticInstructions == "" {
@@ -43,6 +46,71 @@ func TestStaticInstructions_ContractHash(t *testing.T) {
 	if got != wantStaticSHA {
 		t.Fatalf("staticInstructions contract hash drift:\n  want %s\n  got  %s\n\nIf you intentionally edited instructions.md, update wantStaticSHA in the same commit.",
 			wantStaticSHA, got)
+	}
+}
+
+// instructionsTruncationEnvelope is the byte budget some MCP hosts
+// deliver from initialize.instructions before truncating (Claude Code
+// measured cutting at 2,048 characters; other hosts drop the field
+// entirely). Whatever lands past this prefix is invisible to those
+// hosts, so the load-bearing contract must fit inside it.
+const instructionsTruncationEnvelope = 2048
+
+// TestInstructionsFirst2KB gates the truncated-prefix contract, in the
+// spirit of TestDescriptionBudget (budget_test.go): the first 2,048
+// BYTES of staticInstructions must carry, on their own:
+//
+//  1. the guild_session_start mandate
+//  2. the core loop (quest_bounties -> quest_accept -> work -> quest_fulfill)
+//  3. at least one complete worked tool invocation with arguments
+//
+// Bytes, not runes: the file contains multibyte typography, and
+// byte-gating is the stricter, host-agnostic bound whether a host
+// counts characters or bytes. The test logs the measured prefix
+// composition so drift is visible in test output before it breaches.
+func TestInstructionsFirst2KB(t *testing.T) {
+	prefix := staticInstructions
+	if len(prefix) > instructionsTruncationEnvelope {
+		prefix = prefix[:instructionsTruncationEnvelope]
+	}
+
+	t.Logf("=== 2KB envelope: file=%d bytes, prefix=%d bytes (%.0f%% delivered) ===",
+		len(staticInstructions), len(prefix),
+		float64(len(prefix))/float64(len(staticInstructions))*100)
+
+	checks := []struct {
+		label string
+		want  string
+	}{
+		{"session_start mandate", "Before any other guild tool will work, call:"},
+		{"session_start invocation", "guild_session_start()"},
+		{"core loop", "quest_bounties → quest_accept → work → quest_fulfill(report=...)"},
+	}
+	for _, c := range checks {
+		pos := strings.Index(prefix, c.want)
+		if pos < 0 {
+			t.Errorf("first %d bytes of instructions.md missing %s %q; reorder so it lands before the cut",
+				instructionsTruncationEnvelope, c.label, c.want)
+			continue
+		}
+		t.Logf("  %-25s at byte %d", c.label, pos)
+	}
+
+	// A complete worked demonstration: a word-boundary tool invocation
+	// (mirroring doc_coverage_test.go's invocation pattern) tightened to
+	// require a named argument bound to a quoted string, so the bare
+	// core-loop line quest_fulfill(report=...) cannot satisfy it alone.
+	demoRe := regexp.MustCompile(`(?s)\b(?:guild|lore|quest)_[a-z_]+\([^()]*[a-z_]+="[^"]*"`)
+	loc := demoRe.FindStringIndex(prefix)
+	if loc == nil {
+		t.Errorf("first %d bytes of instructions.md contain no worked tool invocation with arguments (want match for %s); move a demonstration above the cut",
+			instructionsTruncationEnvelope, demoRe)
+	} else {
+		snip := strings.Join(strings.Fields(prefix[loc[0]:loc[1]]), " ")
+		if len(snip) > 80 {
+			snip = snip[:80]
+		}
+		t.Logf("  %-25s at byte %d: %q", "worked demonstration", loc[0], snip)
 	}
 }
 
@@ -202,5 +270,45 @@ func TestBuildInstructions_PrinciplesOrderASC(t *testing.T) {
 	if olderPos > newerPos {
 		t.Errorf("principles not in ASC order: 'Older principle' at %d, 'Newer principle' at %d",
 			olderPos, newerPos)
+	}
+}
+
+// TestContractBody_AllOnByteIdentical pins the ADR-006 Phase 3 parity
+// bar: with every module enabled (the default set, all returning
+// Instructions()==""), contractBody returns the embedded contract
+// byte-for-byte. The exclusion seam must be a no-op on the all-on path so
+// the golden-pinned 17107-byte contract never moves.
+func TestContractBody_AllOnByteIdentical(t *testing.T) {
+	got := contractBody()
+	if got != staticInstructions {
+		t.Fatalf("contractBody changed the all-on contract:\n  len(static)=%d len(got)=%d\nThe exclusion seam must not alter bytes when every module is enabled.",
+			len(staticInstructions), len(got))
+	}
+}
+
+// TestRemoveFragment exercises the subtractive exclusion mechanism: a
+// disabled module's verbatim fragment is removed and the surrounding
+// contract is left clean, while an absent fragment leaves the body
+// untouched.
+func TestRemoveFragment(t *testing.T) {
+	const body = "## Core\nalways here\n\n## Compression\nheavy capability text\n\n## Tail\nstill here\n"
+	const frag = "## Compression\nheavy capability text"
+
+	got := removeFragment(body, frag)
+	if strings.Contains(got, "heavy capability text") {
+		t.Errorf("fragment not removed:\n%s", got)
+	}
+	if !strings.Contains(got, "## Core") || !strings.Contains(got, "## Tail") {
+		t.Errorf("removeFragment dropped surrounding contract:\n%s", got)
+	}
+	// The blank-line seam between Compression and Tail must collapse to a
+	// single "\n\n", not leave a double gap.
+	if strings.Contains(got, "\n\n\n\n") {
+		t.Errorf("removeFragment left a double blank-line seam:\n%q", got)
+	}
+
+	// Absent fragment: body unchanged.
+	if out := removeFragment(body, "## Nope\nnot present"); out != body {
+		t.Errorf("removeFragment with absent fragment changed the body")
 	}
 }

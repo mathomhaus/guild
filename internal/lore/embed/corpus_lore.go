@@ -108,3 +108,9 @@ func (LoreCorpus) MetaKey(field MetaField) string {
 		return ""
 	}
 }
+
+// SourceTextColumn supplies the canonical source projection for bulk coverage.
+func (LoreCorpus) SourceTextColumn() string { return "summary" }
+
+// SourceTextQuery reads the same source under the Tx2 writer lock.
+func (LoreCorpus) SourceTextQuery() string { return `SELECT summary FROM entries WHERE id=?` }

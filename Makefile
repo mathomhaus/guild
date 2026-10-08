@@ -25,7 +25,7 @@ BIN_DIR  := bin
 BIN      := $(BIN_DIR)/guild
 SQLCHECK := $(BIN_DIR)/sqlcheck
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -36,8 +36,8 @@ LDFLAGS := -s -w \
 
 # Pinned dev-tool versions — match .github/workflows/ci.yml + .goreleaser.yml
 # so `make install-tools` produces the same environment CI uses.
-GOLANGCI_LINT_VERSION := v1.60.3
-GORELEASER_VERSION    := v2.15.0
+GOLANGCI_LINT_VERSION := v1.64.8
+GORELEASER_VERSION    := v2.15.3
 
 export CGO_ENABLED ?= 0
 
@@ -115,6 +115,10 @@ test-short: ## Run tests with -short (skips slow fixtures)
 
 .PHONY: test-integration
 test-integration: build sqlcheck ## Run end-to-end integration tests (builds guild + sqlcheck first)
+	# Includes the daemon parity suite (daemon_parity_test.go): each parity
+	# test runs the canonical MCP / CLI scenario twice (daemon-down and
+	# daemon-up) in fresh isolated homes and diffs the scrubbed output, so
+	# both arms run from this one target.
 	$(GO) test -race -count=1 ./tests/integration/...
 
 .PHONY: cover
@@ -318,20 +322,105 @@ build-embed: build ## DEPRECATED: use `make build` instead (kept for one cycle s
 
 ##@ Release
 
+.PHONY: release-config
+release-config: $(BIN_DIR) ## Prepare GoReleaser config excluding every model release tag
+	.github/scripts/goreleaser-config.sh .goreleaser.yml $(BIN_DIR)/goreleaser.yml
+
 .PHONY: release-check
-release-check: ## Lint .goreleaser.yml config
+release-check: release-config ## Lint .goreleaser.yml config
 	@command -v goreleaser >/dev/null || { echo "goreleaser not installed — run: make install-tools"; exit 1; }
-	goreleaser check
+	goreleaser check --config $(BIN_DIR)/goreleaser.yml
 
 .PHONY: release-snapshot
-release-snapshot: ## Cross-compile all 6 targets locally (no publishing)
+release-snapshot: release-config ## Cross-compile all 6 targets locally (no publishing)
 	@command -v goreleaser >/dev/null || { echo "goreleaser not installed — run: make install-tools"; exit 1; }
-	goreleaser build --snapshot --clean
+	goreleaser build --snapshot --clean --config $(BIN_DIR)/goreleaser.yml
 
 .PHONY: release-dry-run
-release-dry-run: ## Full release dry-run (skip publish; validates signing + Homebrew)
+release-dry-run: release-config ## Package all targets and Homebrew metadata without publishing or signing
 	@command -v goreleaser >/dev/null || { echo "goreleaser not installed — run: make install-tools"; exit 1; }
-	goreleaser release --snapshot --clean --skip=publish,sign
+	goreleaser release --snapshot --clean --skip=publish,sign --config $(BIN_DIR)/goreleaser.yml
+
+# ----------------------------------------------------------------------
+# Docker
+# ----------------------------------------------------------------------
+
+##@ Docker
+
+DOCKER       ?= docker
+DOCKER_IMAGE ?= guild
+DOCKER_TAG   ?= latest
+
+.PHONY: docker-build
+docker-build: ## Build the guild Docker image (pure-Go, -tags=withembed, non-root runtime)
+	$(DOCKER) build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg DATE=$(DATE) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "✓ built image $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
+.PHONY: docker-test
+docker-test: docker-build ## Build then smoke-test the image: --version, init, inscribe/appraise round-trip against a volume-backed home
+	@vol="guild-docker-test-$$$$"; \
+	$(DOCKER) volume create "$$vol" >/dev/null; \
+	trap '$(DOCKER) volume rm "$$vol" >/dev/null' EXIT; \
+	echo "--- guild --version (state volume mounted)"; \
+	$(DOCKER) run --rm -v "$$vol:/home/guild/.guild" $(DOCKER_IMAGE):$(DOCKER_TAG) --version; \
+	echo "--- guild init + lore inscribe/appraise round-trip"; \
+	$(DOCKER) run --rm -v "$$vol:/home/guild/.guild" --entrypoint /bin/sh $(DOCKER_IMAGE):$(DOCKER_TAG) -c ' \
+		set -eu; \
+		mkdir -p "$$HOME/smoke" && cd "$$HOME/smoke"; \
+		guild init --yes; \
+		guild lore inscribe "docker smoke entry" \
+			--kind observation \
+			--summary "Inscribed by make docker-test to prove the in-container write path." \
+			--topic docker-smoke \
+			--project smoke; \
+		guild lore appraise "docker smoke entry" | grep "docker smoke entry"; \
+	'; \
+	echo "--- state persists across containers (fresh container, same volume)"; \
+	$(DOCKER) run --rm -v "$$vol:/home/guild/.guild" $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		lore appraise "docker smoke entry" | grep "docker smoke entry"; \
+	echo "✓ docker-test passed ($(DOCKER_IMAGE):$(DOCKER_TAG))"
+
+# ----------------------------------------------------------------------
+# E2E (test/e2e: scripted full-loop scenarios in an isolated container)
+# ----------------------------------------------------------------------
+
+##@ E2E
+
+# Image the e2e suite drives. Defaults to the docker-build output.
+GUILD_E2E_IMAGE ?= $(DOCKER_IMAGE):$(DOCKER_TAG)
+
+# GUILD_E2E_MODE selects the server process model inside the container.
+# "direct" (default) spawns `guild mcp serve` per session. "daemon" starts
+# an in-container daemon and routes every session through the shim, running
+# the identical scenarios against the same golden transcripts so daemon-up
+# and daemon-down are asserted byte-identical.
+GUILD_E2E_MODE ?= direct
+
+.PHONY: e2e
+e2e: ## Run the e2e scenario suite against an existing image (set GUILD_E2E_IMAGE to override)
+	GUILD_E2E_DOCKER=1 GUILD_E2E_IMAGE=$(GUILD_E2E_IMAGE) GUILD_E2E_MODE=$(GUILD_E2E_MODE) \
+		$(GO) test -count=1 -timeout 15m -v ./test/e2e/
+
+# e2e runs via a recursive $(MAKE) step (not a second prerequisite):
+# sibling prerequisites have no ordering guarantee under `make -j`, and
+# the suite must not start before the image exists.
+.PHONY: e2e-docker
+e2e-docker: docker-build ## Build the Docker image, then run the e2e scenario suite against it
+	$(MAKE) e2e
+
+.PHONY: e2e-update
+e2e-update: ## Regenerate test/e2e/golden/ transcripts from a live run (review the diff before committing)
+	GUILD_E2E_DOCKER=1 GUILD_E2E_IMAGE=$(GUILD_E2E_IMAGE) GUILD_E2E_MODE=$(GUILD_E2E_MODE) GUILD_E2E_UPDATE=1 \
+		$(GO) test -count=1 -timeout 15m -v ./test/e2e/
+
+.PHONY: e2e-module-toggle
+e2e-module-toggle: docker-build ## ADR-006 Phase 3 proof: disable lore via GUILD_MODULE_LORE=0 and assert it vanishes from every surface
+	GUILD_E2E_DOCKER=1 GUILD_E2E_IMAGE=$(GUILD_E2E_IMAGE) GUILD_E2E_MODE=$(GUILD_E2E_MODE) \
+		$(GO) test -count=1 -timeout 15m -v -run TestE2EModuleToggle ./test/e2e/
 
 # ----------------------------------------------------------------------
 # CI (mirrors .github/workflows/*.yml)

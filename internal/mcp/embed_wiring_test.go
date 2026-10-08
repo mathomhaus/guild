@@ -10,8 +10,8 @@ import (
 )
 
 // TestBuildMCPLoreDeps_EmbedField confirms the MCP-side Deps builder
-// threads currentEmbedProvider into command.Deps.Embed. The test drives
-// two shapes: (1) a fresh DB whose meta is schema-seeded to
+// threads the bundle's embed provider into command.Deps.Embed. The test
+// drives two shapes: (1) a fresh DB whose meta is schema-seeded to
 // "embedder_state=disabled" so the provider resolves to nil; (2) no
 // provider installed, demonstrating buildMCPLoreDeps tolerates a nil
 // provider without a typed-nil interface hazard.
@@ -21,6 +21,9 @@ import (
 // covered by TestEmbedProvider_StateFlip below (which uses meta-only
 // stubs) and by the internal/lore/embed_wiring_test.go truth table.
 func TestBuildMCPLoreDeps_EmbedField(t *testing.T) {
+	// Sandbox $HOME so the hints engine built inside buildMCPLoreDeps
+	// opens a temp quest.db, never the user's real ~/.guild.
+	isolateHome(t)
 	// Route lore.db through a temp file so the provider does not hit
 	// the user's real ~/.guild/lore.db.
 	tmpDir := t.TempDir()
@@ -43,10 +46,10 @@ func TestBuildMCPLoreDeps_EmbedField(t *testing.T) {
 	_ = db.Close()
 
 	t.Run("disabled_meta_yields_nil_embed_resolve", func(t *testing.T) {
-		currentEmbedProvider = newEmbedProvider(openLoreDB, newLogger())
-		t.Cleanup(func() { currentEmbedProvider = nil })
+		core := newTestCore()
+		core.providers.embed = newEmbedProvider(openLoreDB, newLogger())
 
-		deps := buildMCPLoreDeps()
+		deps := core.buildMCPLoreDeps()
 		if deps.Embed == nil {
 			t.Fatalf("buildMCPLoreDeps().Embed should carry the provider, got nil")
 		}
@@ -65,8 +68,9 @@ func TestBuildMCPLoreDeps_EmbedField(t *testing.T) {
 	})
 
 	t.Run("nil_provider_leaves_embed_field_nil", func(t *testing.T) {
-		currentEmbedProvider = nil
-		deps := buildMCPLoreDeps()
+		core := newTestCore()
+		core.providers.embed = nil
+		deps := core.buildMCPLoreDeps()
 		if deps.Embed != nil {
 			t.Errorf("buildMCPLoreDeps().Embed = %+v, want nil when provider is nil", deps.Embed)
 		}

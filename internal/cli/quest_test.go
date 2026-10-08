@@ -400,12 +400,17 @@ func TestCLI_QuestSearch_RRFArmAboveCoverageFloor(t *testing.T) {
 	// Seed vectors for all bridge rows using DeterministicEmbedder.
 	embedder := embed.NewDeterministicEmbedder()
 	const modelID = "bge-small-en-v1.5-int8-cls"
+	upsertCLIQuestMeta(t, db, "quest.embedder_model_id", modelID)
 	for _, id := range bridgeIDs {
-		vec, embedErr := embedder.Embed(ctx, "subject: feature variant search pipeline")
+		source, err := (embed.QuestCorpus{}).SourceText(ctx, db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vec, embedErr := embedder.Embed(ctx, source)
 		if embedErr != nil {
 			t.Fatalf("embed row %d: %v", id, embedErr)
 		}
-		entry := embed.PendingEntry{ID: id, Summary: "feature variant"}
+		entry := embed.PendingEntry{ID: id, Summary: source}
 		if insertErr := embed.InsertVectorRow(ctx, db, embed.QuestCorpus{}, entry, vec, modelID); insertErr != nil {
 			t.Fatalf("insert vector row %d: %v", id, insertErr)
 		}

@@ -6,6 +6,10 @@
 // Per-PID isolation prevents concurrent sessions from clobbering each other's
 // active-project state.
 //
+// These fixtures force direct in-process routing. A shim reconnecting to a
+// resident daemon does not restart the server or rerun startup cleanup; daemon
+// routing is covered separately by daemon_parity_test.go.
+//
 // This test exercises the full subprocess lifecycle:
 //
 //  1. Spawn `guild mcp serve` as a subprocess (FIRST server, PID_1).
@@ -209,6 +213,9 @@ func startMCPServer(t *testing.T, homeDir string) *mcpServer {
 		"HOME=" + homeDir,
 		"PATH=" + os.Getenv("PATH"),
 		"GUILD_NO_USAGE_LOG=1",
+		// Each child must own its MCP server lifecycle. Socket-path limits
+		// must not decide whether this fixture autostarts a resident daemon.
+		"GUILD_NO_DAEMON=1",
 	}
 	cmd.Dir = homeDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -324,6 +331,11 @@ func runMCPBootstrap(ctx context.Context, t *testing.T, homeDir, project string)
 	case <-time.After(10 * time.Second):
 		t.Fatalf("timeout waiting for guild_session_start response from PID %d\nstderr:\n%s",
 			srv.PID, srv.stderrBuf.String())
+	}
+
+	// Pin the lifecycle assumption independently of platform socket limits.
+	if _, err := os.Stat(filepath.Join(homeDir, ".guild", "daemon.json")); !os.IsNotExist(err) {
+		t.Fatalf("direct MCP lifecycle fixture created daemon discovery: %v", err)
 	}
 
 	// Derive session file path: ~/.guild/sessions/<pid>.json

@@ -109,7 +109,7 @@ func Forfeit(ctx context.Context, db *sql.DB, projectID, taskID, note string) (*
 		return nil, fmt.Errorf("quest: forfeit: update: %w", err)
 	}
 
-	if err := emitEvent(ctx, conn, projectID, taskID, "released", owner, note, now); err != nil {
+	if err := emitEvent(ctx, conn, projectID, taskID, EventReleased, owner, note, now); err != nil {
 		return nil, err
 	}
 

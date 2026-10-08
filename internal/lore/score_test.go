@@ -36,8 +36,8 @@ func TestNormalizeFTS_MoreNegativeScoresHigher(t *testing.T) {
 	if !(weak < medium && medium < strong) {
 		t.Fatalf("expected monotonic: weak(%v) < medium(%v) < strong(%v)", weak, medium, strong)
 	}
-	if strong <= 0 || strong >= 1 {
-		t.Fatalf("strong score out of (0,1): %v", strong)
+	if strong <= 0 || math.IsInf(strong, 0) {
+		t.Fatalf("strong evidence invalid: %v", strong)
 	}
 }
 

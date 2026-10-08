@@ -18,9 +18,9 @@ Every subsequent guild MCP tool inherits `project="guild"` automatically.
 ## Repo facts
 
 - Module: `github.com/mathomhaus/guild`
-- Language: Go 1.25+
+- Language: Go 1.26.9+
 - Main libs: `spf13/cobra`, `log/slog`, `modernc.org/sqlite` (pure-Go),
-  `github.com/modelcontextprotocol/go-sdk` v1.5.0
+  `github.com/modelcontextprotocol/go-sdk` (version: see go.mod)
 - Entry points: `cmd/guild/main.go`, `cmd/sqlcheck/main.go`
 - Test gate: `make check` (fmt + vet + lint + sqlcheck + test-race)
 - CI reproducer: `make ci`

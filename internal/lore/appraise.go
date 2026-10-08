@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -53,10 +52,9 @@ type AppraiseParams struct {
 	Now time.Time
 
 	// Embed is the optional embeddings pipeline. When nil or not
-	// Enabled, Appraise is identical to the Phase 0 BM25+stopwords
-	// path and never constructs a vector arm. Enabled + coverage >=
-	// CoverageThreshold triggers the RRF fusion branch per ADR-003
-	// "Partial coverage and deterministic fallback".
+	// usable, Appraise follows the BM25+stopwords
+	// path and never constructs a vector arm. Fresh compatible vectors
+	// enable hybrid retrieval, including partial indexes.
 	Embed *EmbedDeps
 
 	// ProjectIDs is reserved for future use. The cross-project RRF path
@@ -72,14 +70,25 @@ type AppraiseResult struct {
 	Score float64
 	// BM25 is the raw FTS5 bm25() value (more-negative = better).
 	// Zero when the result came from the LIKE fallback branch.
-	BM25 float64
+	BM25          float64
+	LexicalMatch  bool
+	SemanticMatch bool
+	// VectorSimilarity is an approximate cosine ranking signal, not answer confidence.
+	VectorSimilarity float64
 }
 
 // AppraiseOutput is the full response shape, not just the results
 // slice, so callers have one place to find the miss-hint and the
 // "fell back to LIKE" signal without re-inspecting the params.
+// AnswerabilityUnknown means retrieved candidates require a relevance judgment.
+// Rank scores and cosine similarities are not calibrated answer probabilities.
+const AnswerabilityUnknown = "unknown"
+const AnswerabilityNoMatch = "no_match"
+
 type AppraiseOutput struct {
-	Results []AppraiseResult
+	RetrievalMode string
+	Answerability string
+	Results       []AppraiseResult
 	// MissHint is a non-empty human-readable string when the query
 	// matched a slug-like shape AND returned zero results.
 	MissHint string
@@ -98,7 +107,10 @@ var ErrEmptyQuery = errors.New("lore: appraise: empty query")
 const defaultAppraiseLimit = 10
 const appraiseOverfetch = 3
 
-// CoverageThreshold is the floor below which Appraise refuses to
+// CoverageThreshold is retained for API compatibility. Retrieval now uses
+// all fresh compatible vectors in the eligible scope, including partial
+// indexes, with an independent lexical arm preserving missing-vector hits.
+// Historically this was the floor below which Appraise refused to
 // construct the vector arm and serves BM25+stopwords deterministically.
 // Named constant per the "no magic numbers" bar; the value 0.90 comes
 // from ADR-003 "Partial coverage and deterministic fallback" and was
@@ -200,23 +212,10 @@ func Appraise(ctx context.Context, db *sql.DB, params AppraiseParams) (*Appraise
 		now = time.Now().UTC()
 	}
 
-	// ADR-003 gate: when the embedder is enabled AND coverage clears
-	// CoverageThreshold, appraise runs the hybrid RRF path. Otherwise
-	// it runs the Phase 0 BM25+stopwords path identical to the
-	// pre-Phase-1 code. The decision is local to this function: no
-	// global state, no caller coordination required. Cross-project
-	// appraise (AllProjects=true) delegates to appraiseCrossProject
-	// which fans out per-project and re-fuses the results.
-	if params.AllProjects && params.Embed.Enabled() {
-		out, handled, err := appraiseCrossProject(ctx, db, &params, now, scoring, limit)
-		if err != nil {
-			return nil, err
-		}
-		if handled {
-			return out, nil
-		}
-	}
-	if !params.AllProjects && params.Embed.Enabled() {
+	// A usable runtime and fresh scoped vectors enable the hybrid arm.
+	// Both scopes use the same coverage/filter policy. Runtime or index
+	// failures fall through to the independent lexical path.
+	if params.Embed.Enabled() {
 		out, handled, err := appraiseRRF(ctx, db, &params, now, scoring, limit)
 		if err != nil {
 			return nil, err
@@ -226,59 +225,26 @@ func Appraise(ctx context.Context, db *sql.DB, params AppraiseParams) (*Appraise
 		}
 	}
 
-	rows, bm25s, err := runFTSQuery(ctx, db, q, &params, now, overfetch)
+	_, exact, err := eligibleEntryIDs(ctx, db, &params, now)
 	if err != nil {
 		return nil, err
 	}
-	fellBack := false
-	if len(rows) == 0 {
-		rows, bm25s, err = runLIKEFallback(ctx, db, q, &params, now, overfetch)
-		if err != nil {
-			return nil, err
-		}
-		fellBack = true
+	results, fellBack, err := lexicalCandidates(ctx, db, &params, now, scoring, overfetch, exact)
+	if err != nil {
+		return nil, err
 	}
-
-	out := &AppraiseOutput{}
-	if len(rows) == 0 {
+	out := &AppraiseOutput{RetrievalMode: "lexical", Answerability: AnswerabilityUnknown}
+	if len(results) == 0 {
 		out.MissHint = slugHint(q)
+		out.Answerability = AnswerabilityNoMatch
 		return out, nil
 	}
-
-	results := make([]AppraiseResult, len(rows))
-	for i := range rows {
-		// When fellBack, use recency alone (no BM25 contribution).
-		var base float64
-		if fellBack {
-			base = NormalizeRecency(daysBetween(rows[i].CreatedAt, now), scoring.HalfLifeDays)
-		} else {
-			base = CombineScore(bm25s[i], daysBetween(rows[i].CreatedAt, now), scoring)
-		}
-		score := base + TitleBoost(rows[i].Title, q, scoring)
-		results[i] = AppraiseResult{
-			Entry: rows[i],
-			Score: score,
-			BM25:  bm25s[i],
-		}
-	}
-
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
 	if len(results) > limit {
 		results = results[:limit]
 	}
 	out.Results = results
 	out.FellBackToLIKE = fellBack
-
-	if params.AllProjects {
-		counts := map[string]int{}
-		for _, r := range results {
-			counts[r.Entry.ProjectID]++
-		}
-		out.ProjectCounts = counts
-	}
+	populateProjectCounts(out, params.AllProjects)
 
 	if err := bumpAccessCounters(ctx, db, now, results); err != nil {
 		// Telemetry-class error — don't fail the query just because
@@ -307,7 +273,7 @@ func runFTSQuery(ctx context.Context, db *sql.DB, query string, params *Appraise
 		FROM entries_fts
 		JOIN entries e ON e.id = entries_fts.rowid
 		WHERE entries_fts MATCH ?` + where + `
-		ORDER BY entries_fts.rank
+		ORDER BY entries_fts.rank, e.id
 		LIMIT ?`
 	all := append([]any{fts}, args...)
 	all = append(all, overfetch)
@@ -403,7 +369,7 @@ func buildWhereClause(params *AppraiseParams, refNow time.Time) (whereFragment s
 		// time.Duration (not user text), this is safe from SQL
 		// injection, but we still use parameterized binding via
 		// julianday comparison so sqlcheck stays happy.
-		parts = append(parts, "e.created_at >= datetime(?, 'utc')")
+		parts = append(parts, "julianday(e.created_at) >= julianday(?)")
 		cutoff := refNow.Add(-params.Since).Format(time.RFC3339)
 		args = append(args, cutoff)
 	}

@@ -41,6 +41,13 @@ type CatalogParams struct {
 
 	// Now is injectable for deterministic tests; zero → time.Now().UTC().
 	Now time.Time
+
+	// ValidDaysByKind is the optional per-kind decay window map from
+	// merged config ([inscribe.valid_days]). Same contract as
+	// InscribeParams.ValidDaysByKind: a present key wins over the
+	// built-in kindValidDays default (0 = never stale); nil map or
+	// missing key falls back to kindValidDays.
+	ValidDaysByKind map[string]int
 }
 
 // Catalog walks .md files under p.Dir and inscribes each as a lore entry.
@@ -133,8 +140,9 @@ func Catalog(ctx context.Context, db *sql.DB, p *CatalogParams) (*CatalogResult,
 			kind = inferKindFromPath(absPath)
 		}
 
-		// Resolve valid_days from kind.
-		validDays := kindValidDays(kind)
+		// Resolve valid_days from kind (configured window first,
+		// built-in default otherwise).
+		validDays := resolveKindValidDays(kind, p.ValidDaysByKind)
 
 		tags := strings.TrimSpace(p.Tags)
 

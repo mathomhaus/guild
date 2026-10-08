@@ -260,7 +260,7 @@ func runCorpusSuite(t *testing.T, corpus VectorCorpus, seed func(t *testing.T, d
 		Index:    idx,
 		Corpus:   corpus,
 		ModelID:  canonModelID,
-	}, newID, "new entry for WriteVector")
+	}, newID, mustSourceText(t, db, corpus, newID))
 	if err != nil {
 		t.Fatalf("%s: WriteVector: %v", corpus.Name(), err)
 	}
@@ -369,7 +369,7 @@ func TestCorpus_AdversarialIsolation(t *testing.T) {
 		Index:    loreIdx,
 		Corpus:   LoreCorpus{},
 		ModelID:  canonModelID,
-	}, 1, "lore one body")
+	}, 1, mustSourceText(t, db, LoreCorpus{}, 1))
 	if err != nil {
 		t.Fatalf("lore WriteVector: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestCorpus_AdversarialIsolation(t *testing.T) {
 		Index:    fakeIdx,
 		Corpus:   fakeCorpus{},
 		ModelID:  canonModelID,
-	}, 101, "fake one body")
+	}, 101, mustSourceText(t, db, fakeCorpus{}, 101))
 	if err != nil {
 		t.Fatalf("fake WriteVector: %v", err)
 	}
@@ -465,3 +465,14 @@ func readMetaStringDirect(t *testing.T, db *sql.DB, key string) string {
 // the test file is the only compilation unit exercising it. Keeps
 // `go vet` happy if the _ references go unused in a refactor.
 var _ = storage.Open
+
+func mustSourceText(t *testing.T, db *sql.DB, corpus VectorCorpus, id int64) string {
+	t.Helper()
+	text, err := corpus.SourceText(context.Background(), db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
+func (fakeCorpus) SourceTextQuery() string { return `SELECT body FROM fake_entities WHERE id=?` }

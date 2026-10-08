@@ -157,6 +157,9 @@ release:
   # draft: false publishes the release immediately on tag push.
   # Set to true if you want a human to review before publishing.
   draft: false
+  # RC tags must not become a stable release or replace the latest channel.
+  prerelease: auto
+  make_latest: "{{ if .Prerelease }}false{{ else }}true{{ end }}"
   # Replace existing release assets if re-running goreleaser on the same tag.
   replace_existing_artifacts: true
   name_template: "guild {{.Version}}"
@@ -226,7 +229,7 @@ homebrew_casks:
 # Used for local dry-runs and CI PR builds.
 
 snapshot:
-  version_template: "{{ .Tag }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 # ─── changelog ───────────────────────────────────────────────────────────────
 

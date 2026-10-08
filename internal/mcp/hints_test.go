@@ -7,12 +7,20 @@ import (
 
 func TestRegisterClosesPreviousHintsEngineDB(t *testing.T) {
 	isolateHome(t)
-	t.Cleanup(closeCurrentHintsEngine)
+	t.Cleanup(func() {
+		if processProviders != nil {
+			processProviders.closeHintsEngine()
+		}
+	})
 
 	if _, err := build(); err != nil {
 		t.Fatalf("first build: %v", err)
 	}
-	first := currentHintsEngine
+	firstBundle := processProviders
+	if firstBundle == nil {
+		t.Fatal("first build did not record a process-default bundle")
+	}
+	first := firstBundle.hintsEngine
 	if first == nil || first.Store == nil || first.Store.DB == nil {
 		t.Fatal("first build did not initialize hints engine DB")
 	}
@@ -24,13 +32,18 @@ func TestRegisterClosesPreviousHintsEngineDB(t *testing.T) {
 	if _, err := build(); err != nil {
 		t.Fatalf("second build: %v", err)
 	}
-	if currentHintsEngine == nil || currentHintsEngine.Store == nil || currentHintsEngine.Store.DB == nil {
+	secondBundle := processProviders
+	if secondBundle == nil || secondBundle == firstBundle {
+		t.Fatal("second build did not construct a fresh process-default bundle")
+	}
+	second := secondBundle.hintsEngine
+	if second == nil || second.Store == nil || second.Store.DB == nil {
 		t.Fatal("second build did not initialize replacement hints engine DB")
 	}
-	if currentHintsEngine == first {
+	if second == first {
 		t.Fatal("second build reused the previous hints engine")
 	}
-	if currentHintsEngine.Store.DB == firstDB {
+	if second.Store.DB == firstDB {
 		t.Fatal("second build reused the previous hints DB handle")
 	}
 	if err := firstDB.PingContext(context.Background()); err == nil {

@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/mathomhaus/guild/internal/cli"
+	"github.com/mathomhaus/guild/internal/command"
 	"github.com/mathomhaus/guild/internal/release"
 )
 
@@ -38,7 +39,12 @@ func main() {
 	})
 
 	if err := cli.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		// In agent mode the command registry has already written the
+		// structured {ok:false,...} envelope to stdout; skip the duplicate
+		// human-readable stderr line but keep the non-zero exit code.
+		if !command.IsAgentReported(err) {
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
 }

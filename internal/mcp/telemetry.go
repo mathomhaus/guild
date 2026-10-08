@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/mathomhaus/guild/internal/config"
-	"github.com/mathomhaus/guild/internal/session"
 	"github.com/mathomhaus/guild/internal/telemetry"
 )
 
@@ -16,7 +15,7 @@ import (
 // internal/command/mcp.go can emit one usage.log row per CallTool.
 //
 // Resolution order for the project id:
-//  1. per-PID session file (guild_session_start sets it)
+//  1. the core's session identity (guild_session_start sets it)
 //  2. GUILD_PROJECT env var
 //  3. empty string (best-effort; telemetry.Record still writes the row)
 //
@@ -27,13 +26,13 @@ import (
 // is best-effort and must never interrupt a tool call.
 //
 //nolint:gocritic // ptrToRefParam — errPtr/respBytesPtr observe late-bound values from defer
-func recordMCPTelemetry(ctx context.Context, toolName string, start time.Time, errPtr *error, respBytesPtr *uint) {
+func (c *serverCore) recordMCPTelemetry(ctx context.Context, toolName string, start time.Time, errPtr *error, respBytesPtr *uint) {
 	cfg, err := config.Load(nil)
 	if err != nil {
 		return // config unavailable — skip silently
 	}
 
-	pid, _ := session.ResolveForMCP(ctx, "", os.Getenv(guildProjectEnv))
+	pid, _ := c.sessions.ResolveForMCP(ctx, "", os.Getenv(guildProjectEnv))
 
 	exit := 0
 	if errPtr != nil && *errPtr != nil {

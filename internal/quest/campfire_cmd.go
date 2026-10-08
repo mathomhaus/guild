@@ -67,6 +67,9 @@ var CampfireCommand = &command.Command[CampfireInput, CampfireOutput]{
 		if err := Campfire(ctx, db, pid, in.QuestID, params); err != nil {
 			return CampfireOutput{}, err
 		}
+		// Activity renewal: a daemon-mediated campfire write on a quest this
+		// session leased refreshes that lease. No-op without a daemon.
+		renewLeaseActivity(ctx, d, pid, in.QuestID)
 		return CampfireOutput{QuestID: strings.ToUpper(in.QuestID)}, nil
 	},
 	CLIFormat:      func(s command.CLISink, o CampfireOutput) string { return formatCampfire(s, o) },

@@ -1,0 +1,187 @@
+[
+  {
+    "name": "surge-allowance",
+    "query": "Can an account temporarily exceed its sustained request rate, and what allowance makes that possible?",
+    "project": "orchard",
+    "relevant": [
+      "burst"
+    ]
+  },
+  {
+    "name": "disagreeing-time",
+    "query": "Two machines put the same incoming operation into different counting periods. Which timestamp should determine its period?",
+    "project": "",
+    "relevant": [
+      "clock"
+    ]
+  },
+  {
+    "name": "caller-delay",
+    "query": "After we tell a caller it is sending too much traffic, how should we communicate when it can try again?",
+    "project": "",
+    "relevant": [
+      "retry"
+    ]
+  },
+  {
+    "name": "last-allowance",
+    "query": "What prevents two callers from both seeing the last remaining allowance and consuming it?",
+    "project": "orchard",
+    "relevant": [
+      "atomic"
+    ]
+  },
+  {
+    "name": "current-session-lifetime",
+    "query": "How long do we retain a signed-in user's cached state in the library service now?",
+    "project": "library",
+    "relevant": [
+      "ttl"
+    ]
+  },
+  {
+    "name": "miss-fanout",
+    "query": "How do we avoid hundreds of simultaneous lookups all asking the backing store for the same missing value?",
+    "project": "",
+    "relevant": [
+      "stampede"
+    ]
+  },
+  {
+    "name": "revisits",
+    "query": "Which replacement rule worked better when people repeatedly revisited the same sessions?",
+    "project": "",
+    "relevant": [
+      "eviction"
+    ]
+  },
+  {
+    "name": "detached-job",
+    "query": "A background job's telemetry appears detached from the HTTP operation that caused it. What context must travel into the job?",
+    "project": "",
+    "relevant": [
+      "trace"
+    ]
+  },
+  {
+    "name": "exceptional-response",
+    "query": "How can we keep evidence of exceptional response times without recording every normal request?",
+    "project": "observatory",
+    "relevant": [
+      "sampling"
+    ]
+  },
+  {
+    "name": "explain-choices",
+    "query": "Where should instrumentation go so it explains choices without flooding output with repetitive records?",
+    "project": "",
+    "relevant": [
+      "logs"
+    ]
+  },
+  {
+    "name": "account-history",
+    "query": "What index lets us enumerate the newest sessions belonging to a particular account efficiently?",
+    "project": "archive",
+    "relevant": [
+      "index"
+    ]
+  },
+  {
+    "name": "file-still-large",
+    "query": "We removed a lot of records, but the database file still occupies the same disk space. What maintenance step addresses this?",
+    "project": "",
+    "relevant": [
+      "vacuum"
+    ]
+  },
+  {
+    "name": "keep-writes-running",
+    "query": "How should we add a production index without interrupting incoming writes?",
+    "project": "",
+    "relevant": [
+      "lock"
+    ]
+  },
+  {
+    "name": "sandbox-lifetime",
+    "query": "What retention window applies to disposable sandbox sessions?",
+    "project": "sandbox",
+    "relevant": [
+      "collision"
+    ]
+  },
+  {
+    "name": "alive-versus-ready",
+    "query": "Is a running process enough to mark this service ready for traffic?",
+    "project": "orchard",
+    "relevant": [
+      "probe"
+    ]
+  },
+  {
+    "name": "recent-expiry",
+    "query": "What changed recently about how session data expires?",
+    "project": "library",
+    "relevant": [
+      "ttl"
+    ],
+    "since_days": 7
+  },
+  {
+    "name": "exact-symbol",
+    "query": "IDX_SESSION_TIME",
+    "project": "archive",
+    "relevant": [
+      "index"
+    ]
+  },
+  {
+    "name": "lunch",
+    "query": "What is the cafeteria serving for lunch?",
+    "project": "",
+    "relevant": []
+  },
+  {
+    "name": "sports",
+    "query": "Who won yesterday's national cricket final?",
+    "project": "",
+    "relevant": []
+  },
+  {
+    "name": "missing-deployment-count",
+    "query": "How many replicas were deployed during last night's quota outage?",
+    "project": "orchard",
+    "relevant": []
+  },
+  {
+    "name": "missing-secret",
+    "query": "What is the administrator password for the session database?",
+    "project": "archive",
+    "relevant": []
+  },
+  {
+    "name": "missing-ticket",
+    "query": "Which approved change ticket authorized the thirty-second cache policy?",
+    "project": "library",
+    "relevant": []
+  },
+  {
+    "name": "missing-owner",
+    "query": "Who is the on-call engineer responsible for the tracing exporter this weekend?",
+    "project": "observatory",
+    "relevant": []
+  },
+  {
+    "name": "missing-backup-location",
+    "query": "Where is the offsite backup bucket for the session database?",
+    "project": "archive",
+    "relevant": []
+  },
+  {
+    "name": "random-string",
+    "query": "zxqvplm987 wurblit642",
+    "project": "",
+    "relevant": []
+  }
+]

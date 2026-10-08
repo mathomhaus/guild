@@ -8,28 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// Tx2 invariants (ADR-003 "Concurrency invariants"):
-//
-//  1. All vector writes use INSERT OR IGNORE on lore_vectors. entry_id
-//     is the PK, so a racing CLI inscribe + backfill pass that both
-//     encode the same row produce one row, never a constraint error.
-//  2. Model identity is re-read from meta at the start of Tx2 and
-//     compared against the embedder's bound model_id. A mismatch
-//     aborts cleanly (no user-visible error), increments
-//     meta.embed_error_count, and logs once with reason=binary_outdated.
-//  3. meta.vector_epoch and meta.vector_coverage_num are bumped
-//     atomically inside the same BEGIN IMMEDIATE that writes the row.
-//
-// This file is the only production writer to lore_vectors. Callers in
-// internal/lore (inscribe/update/reforge) construct a HotDeps and call
-// WriteVector from their own post-commit path. Backfill (QUEST-210) is
-// expected to reuse WriteVector once that quest lands; the entry
-// points are identical.
+// Tx2 encodes outside the database lock, then checks model identity, source
+// text and eligibility inside BEGIN IMMEDIATE. It replaces incompatible or
+// content-stale rows and advances epoch only when a vector changes. Diagnostic
+// counters are recomputed from eligible rows rather than incremented blindly.
 
 // HotDeps is the set of dependencies WriteVector needs. Constructed by
 // the caller (lore package today, cmd/guild tomorrow) and passed
@@ -87,10 +73,9 @@ func (d HotDeps) resolveCorpus() VectorCorpus {
 // Empty struct on any of the "graceful skip" outcomes (model mismatch,
 // embedder disabled) so the caller can detect those via Written=false.
 type WriteVectorResult struct {
-	// Written is true only when the INSERT OR IGNORE caused a new row
-	// to appear. A false-written result with no error means either
-	// (a) the row already existed (coexisting writer won the race), or
-	// (b) the model_id guard aborted the Tx2 cleanly.
+	// Written is true when a row was inserted or repaired. A false result
+	// means unchanged content, a concurrent source edit, inactive/deleted
+	// entity, a disabled embedder, or an identity mismatch.
 	Written bool
 
 	// Epoch is the meta.vector_epoch value after WriteVector. On
@@ -116,24 +101,9 @@ type WriteVectorResult struct {
 // than invoking WriteVector and hitting this error.
 var ErrEmbedderNotProvided = errors.New("embed/hot: nil Embedder")
 
-// WriteVector runs the full Tx2 sequence for a single entry:
-//
-//  1. Encode summary via the embedder (outside the transaction).
-//  2. Open BEGIN IMMEDIATE on a dedicated connection.
-//  3. SELECT meta.embedder_model_id; abort if != deps.ModelID.
-//  4. INSERT OR IGNORE lore_vectors row.
-//  5. UPDATE entries SET vector_state='indexed' WHERE id = ? AND
-//     vector_state != 'indexed' (so a concurrent winner's state stands).
-//  6. Atomic meta bumps: vector_epoch = vector_epoch + 1,
-//     vector_coverage_num = vector_coverage_num + 1 ONLY when the
-//     INSERT actually produced a new row.
-//  7. COMMIT.
-//
-// On any SQL error after BEGIN, Tx2 rolls back and returns the error
-// wrapped with %w so callers can errors.Is against driver sentinels.
-// On a model-id mismatch, Tx2 bumps meta.embed_error_count (in its own
-// tiny follow-up exec), logs once, and returns nil with Written=false.
-// This matches ADR-003's "no user-visible error on binary_outdated".
+// WriteVector encodes and conditionally persists one current source. A failed
+// encode retains an existing vector. Concurrent edits cannot be overwritten by
+// a delayed encoder. The returned epoch describes the committed row change.
 func WriteVector(ctx context.Context, db *sql.DB, deps HotDeps, entryID int64, summary string) (WriteVectorResult, error) {
 	if db == nil {
 		return WriteVectorResult{}, fmt.Errorf("embed/hot: WriteVector: nil *sql.DB")
@@ -187,7 +157,10 @@ func WriteVector(ctx context.Context, db *sql.DB, deps HotDeps, entryID int64, s
 	}
 	qvec := Quantize(fvec)
 	if qvec == nil {
-		return WriteVectorResult{}, fmt.Errorf("embed/hot: quantize returned nil (len(fvec)=%d)", len(fvec))
+		if err := bumpEmbedErrorCount(ctx, db, corpus, "invalid_vector"); err != nil {
+			logger.Warn("embed/hot: record invalid vector failed", "err", err)
+		}
+		return WriteVectorResult{}, fmt.Errorf("embed/hot: quantize rejected nonfinite or zero vector")
 	}
 
 	// 2. Take a dedicated conn and BEGIN IMMEDIATE. Shares
@@ -252,87 +225,16 @@ func WriteVector(ctx context.Context, db *sql.DB, deps HotDeps, entryID int64, s
 		return WriteVectorResult{}, nil
 	}
 
-	// 4. INSERT OR IGNORE. entry_id is the PK; a concurrent backfill
-	//    writer that raced us leaves our INSERT as a no-op and our
-	//    counter bump as a skip (detected via RowsAffected).
-	ch := sha256.Sum256([]byte(summary))
-	contentHash := hex.EncodeToString(ch[:])
-	nowUnix := time.Now().Unix()
-	blob := make([]byte, VecDim)
-	for i, v := range qvec {
-		blob[i] = byte(v)
-	}
-	insertQuery := fmt.Sprintf(`INSERT OR IGNORE INTO %s (entry_id, model_id, dim, vec, encoded_at, content_hash) VALUES (?, ?, ?, ?, ?, ?)`, corpus.VectorTable()) //nolint:gosec // G201: table name is a compile-time corpus accessor, not user input.
-	res, err := conn.ExecContext(ctx, insertQuery,                                                                                                                  //nolint:sqlcheck // table name is a compile-time corpus accessor.
-		entryID, deps.ModelID, VecDim, blob, nowUnix, contentHash)
+	result, err := writeEncodedTx(ctx, conn, corpus, entryID, summary, qvec, deps.ModelID)
 	if err != nil {
-		return WriteVectorResult{}, fmt.Errorf("embed/hot: insert lore_vectors: %w", err)
+		return WriteVectorResult{}, err
 	}
-	inserted, err := res.RowsAffected()
-	if err != nil {
-		return WriteVectorResult{}, fmt.Errorf("embed/hot: rows affected: %w", err)
+	epoch := result.Epoch
+	inserted := int64(0)
+	if result.Written {
+		inserted = 1
 	}
-
-	// If the INSERT was a no-op (row already existed), another
-	// writer populated the vector first. Still make the entry's
-	// state reflect that a vector is present and advance the epoch
-	// so other readers refresh their index (in case the winning
-	// writer was another process whose splice we missed). Skip the
-	// coverage_num bump in that case.
-	// If inserted, bump coverage_num atomically. Epoch always bumps
-	// when a new vector appears; on no-op we still bump only when we
-	// changed the entry's state (vector_state flip).
-	epochKey := corpus.MetaKey(FieldVectorEpoch)
-	coverageNumKey := corpus.MetaKey(FieldVectorCoverageNum)
-	if inserted > 0 {
-		// UPDATE vector_state='indexed' when the corpus tracks state.
-		// Harmless if already indexed (rare: self-race).
-		if stateCol := corpus.VectorStateColumn(); stateCol != "" {
-			flipQuery := fmt.Sprintf(`UPDATE %s SET %s = 'indexed', updated_at = updated_at WHERE %s = ?`,
-				corpus.EntityTable(), stateCol, corpus.EntityIDColumn())
-			if _, err := conn.ExecContext(ctx, flipQuery, entryID); err != nil { //nolint:sqlcheck // table + columns are compile-time corpus accessors.
-				return WriteVectorResult{}, fmt.Errorf("embed/hot: update entries vector_state: %w", err)
-			}
-		}
-		// Atomic counter bumps. The "X = X + 1" form is evaluated
-		// inside SQLite under the BEGIN IMMEDIATE, so the read and
-		// write happen without interleaving any other writer. Keys are
-		// corpus-resolved so two corpora cannot alias on a shared
-		// meta row.
-		if _, err := conn.ExecContext(ctx, `
-			UPDATE meta
-			   SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
-			 WHERE key IN (?, ?)
-		`, epochKey, coverageNumKey); err != nil {
-			return WriteVectorResult{}, fmt.Errorf("embed/hot: bump epoch and coverage_num: %w", err)
-		}
-	} else {
-		// INSERT lost the race; the row exists under some other
-		// writer's content_hash. We still want the cached epoch to
-		// advance so other readers reload and observe the new vector.
-		// Do NOT bump coverage_num (the other writer already did).
-		if _, err := conn.ExecContext(ctx, `
-			UPDATE meta
-			   SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
-			 WHERE key = ?
-		`, epochKey); err != nil {
-			return WriteVectorResult{}, fmt.Errorf("embed/hot: bump epoch (noop insert): %w", err)
-		}
-	}
-
-	// Read back the new epoch so the caller can pass it to Splice
-	// without an additional round trip. This is still inside the
-	// BEGIN IMMEDIATE so the value reflects our own write.
-	var epochStr string
-	if err := conn.QueryRowContext(ctx,
-		`SELECT value FROM meta WHERE key = ?`, epochKey,
-	).Scan(&epochStr); err != nil {
-		return WriteVectorResult{}, fmt.Errorf("embed/hot: read epoch: %w", err)
-	}
-	epoch, err := strconv.ParseInt(epochStr, 10, 64)
-	if err != nil {
-		return WriteVectorResult{}, fmt.Errorf("embed/hot: parse epoch %q: %w", epochStr, err)
-	}
+	contentHash := result.ContentHash
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return WriteVectorResult{}, fmt.Errorf("embed/hot: commit: %w", err)
@@ -343,7 +245,7 @@ func WriteVector(ctx context.Context, db *sql.DB, deps HotDeps, entryID int64, s
 	// against the in-process index requires the caller's mutex, not
 	// the embed package's. Splice + epoch bump must happen under the
 	// same lock window so the cached epoch never lags the splice.
-	if deps.Index != nil {
+	if deps.Index != nil && result.Written {
 		if err := deps.Index.Splice(entryID, qvec, epoch); err != nil {
 			// Splice only fails on a malformed vector (out-of-order
 			// epochs are resolved internally per slot). The DB row is
@@ -397,6 +299,11 @@ func bumpEmbedErrorCount(ctx context.Context, db *sql.DB, corpus VectorCorpus, r
 		 WHERE key = ?
 	`, corpus.MetaKey(FieldEmbedErrorCount)); err != nil {
 		return fmt.Errorf("embed/hot: bump embed_error_count (%s): %w", reason, err)
+	}
+	for _, kv := range []struct{ k, v string }{{corpus.MetaKey(FieldEmbedLastError), reason}, {corpus.MetaKey(FieldEmbedLastErrorAt), time.Now().UTC().Format(time.RFC3339)}} {
+		if _, err := conn.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, kv.k, kv.v); err != nil {
+			return err
+		}
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("embed/hot: bump embed_error_count commit: %w", err)

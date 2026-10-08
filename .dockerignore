@@ -1,0 +1,25 @@
+# Keep the Docker build context to what `go build ./cmd/guild` needs:
+# go.mod/go.sum, .model-version, cmd/, internal/. Everything heavy or
+# host-specific stays out.
+.git
+.github
+.claude
+.cache
+.vscode
+.idea
+bin
+dist
+vendor
+coverage.out
+coverage.html
+docs
+examples
+recipe
+tests
+Dockerfile
+.dockerignore
+.goreleaser.yml
+install.sh
+install.ps1
+*.md
+LICENSE

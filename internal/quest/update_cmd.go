@@ -107,6 +107,9 @@ var UpdateCommand = &command.Command[UpdateInput, UpdateOutput]{
 		if err != nil {
 			return UpdateOutput{}, err
 		}
+		// Activity renewal: a daemon-mediated update on a quest this session
+		// leased refreshes that lease. No-op without a daemon.
+		renewLeaseActivity(ctx, d, pid, q.ID)
 		return UpdateOutput{Quest: q}, nil
 	},
 	CLIFormat: func(s command.CLISink, o UpdateOutput) string { return formatUpdated(s, o) },

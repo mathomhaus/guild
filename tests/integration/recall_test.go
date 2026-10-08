@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -56,11 +57,9 @@ func TestRecall_ExactTitleRank1(t *testing.T) {
 			continue
 		}
 
-		// The title must appear somewhere in the output (rank-1 result).
-		// appraise output starts with "🔮 N entry(ies) appraised:" header
-		// followed by the ranked results; check the full output contains the
-		// title so we don't have to parse line structure.
-		if containsNormalized(inv.Stdout, e.Title) {
+		// The header echoes the query even when no matching entry exists.
+		// Only the first result row can establish a rank-one hit.
+		if firstAppraiseTitle(inv.Stdout) == normalizeTitle(e.Title) {
 			hits++
 			t.Logf("HIT  [%d/%d] %q", i+1, len(corpus), e.Title)
 		} else {
@@ -82,14 +81,51 @@ func TestRecall_ExactTitleRank1(t *testing.T) {
 	}
 }
 
-// containsNormalized checks whether the target title appears in output,
-// normalizing whitespace and case so minor formatting differences don't
-// cause false misses. The queried title's content must be in the result,
-// not necessarily its exact bytes.
-func containsNormalized(output, title string) bool {
-	normOut := strings.ToLower(normalizeWS(output))
-	normTitle := strings.ToLower(normalizeWS(title))
-	return strings.Contains(normOut, normTitle)
+var appraiseResultRow = regexp.MustCompile(`^[ \t]*(?:LORE|ENTRY)-[0-9]+[ \t]+\[[^\]\r\n]*\][ \t]*([^\r\n]*)$`)
+
+func firstAppraiseTitle(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		match := appraiseResultRow.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		if match[1] != "" {
+			return normalizeTitle(match[1])
+		}
+		// The legacy CLI puts the title on the next line; the command
+		// registry and MCP render it on the same line as the metadata.
+		if i+1 < len(lines) {
+			return normalizeTitle(lines[i+1])
+		}
+		return ""
+	}
+	return ""
+}
+
+func normalizeTitle(title string) string {
+	return strings.ToLower(normalizeWS(title))
+}
+
+func TestRecallResultParsing_RejectsQueryEcho(t *testing.T) {
+	const title = "Durable retry policy"
+	for _, output := range []string{
+		`nothing found for "Durable retry policy"`,
+		"1 result(s) for \"Durable retry policy\":\n  LORE-2 [example/decision · current · 1d ago]  Other policy\n  Durable retry policy is mentioned in the summary",
+		"2 result(s) for \"Durable retry policy\":\n  LORE-2 [example/decision] Other policy\n  LORE-1 [example/decision] Durable retry policy",
+	} {
+		if firstAppraiseTitle(output) == normalizeTitle(title) {
+			t.Errorf("query echo or lower-ranked title counted as rank one: %q", output)
+		}
+	}
+	output := "1 result(s):\n  LORE-1 [example/decision · current · 1d ago]  Durable retry policy\n  Summary"
+	if got := firstAppraiseTitle(output); got != normalizeTitle(title) {
+		t.Errorf("first result title = %q, want %q", got, normalizeTitle(title))
+	}
+	output = "1 entry(ies) appraised:\n  LORE-1 [example/decision · current · today]\n  Durable retry policy\n  Summary"
+	if got := firstAppraiseTitle(output); got != normalizeTitle(title) {
+		t.Errorf("multiline first result title = %q, want %q", got, normalizeTitle(title))
+	}
 }
 
 // normalizeWS collapses runs of whitespace to a single space and trims

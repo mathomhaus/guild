@@ -85,7 +85,7 @@ func TestBackfill_EmbedsPending(t *testing.T) {
 	res, err := Backfill(context.Background(), BackfillOptions{
 		DB:       db,
 		Embedder: NewDeterministicEmbedder(),
-		ModelID:  "test",
+		ModelID:  "bge-small-en-v1.5-int8-cls",
 	})
 	if err != nil {
 		t.Fatalf("Backfill: %v", err)
@@ -124,13 +124,13 @@ func TestBackfill_Idempotent(t *testing.T) {
 	seedEntries(t, db, 3)
 
 	ctx := context.Background()
-	first, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: "t"})
+	first, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: "bge-small-en-v1.5-int8-cls"})
 	if err != nil {
 		t.Fatalf("first Backfill: %v", err)
 	}
 	epochAfterFirst := first.Epoch
 
-	second, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: "t"})
+	second, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: "bge-small-en-v1.5-int8-cls"})
 	if err != nil {
 		t.Fatalf("second Backfill: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestBackfill_ExcludesArchivedParked(t *testing.T) {
 	res, err := Backfill(context.Background(), BackfillOptions{
 		DB:       db,
 		Embedder: NewDeterministicEmbedder(),
-		ModelID:  "t",
+		ModelID:  "bge-small-en-v1.5-int8-cls",
 	})
 	if err != nil {
 		t.Fatalf("Backfill: %v", err)
@@ -183,7 +183,7 @@ func TestBackfill_NullEmbedder_ShortCircuits(t *testing.T) {
 	_, err := Backfill(context.Background(), BackfillOptions{
 		DB:       db,
 		Embedder: NewNullEmbedder(),
-		ModelID:  "t",
+		ModelID:  "bge-small-en-v1.5-int8-cls",
 	})
 	if !errors.Is(err, ErrEmbedderDisabled) {
 		t.Errorf("want ErrEmbedderDisabled, got %v", err)
@@ -196,7 +196,7 @@ func TestInvalidate_DropsVectorsAndFlipsState(t *testing.T) {
 	db := newTestDB(t)
 	ids := seedEntries(t, db, 3)
 	ctx := context.Background()
-	if _, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: "t"}); err != nil {
+	if _, err := Backfill(ctx, BackfillOptions{DB: db, Embedder: NewDeterministicEmbedder(), ModelID: "bge-small-en-v1.5-int8-cls"}); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 	// Archive one entry so we can confirm it is NOT flipped back.
@@ -259,7 +259,7 @@ func TestBackfill_ProgressThreshold(t *testing.T) {
 	_, err := Backfill(context.Background(), BackfillOptions{
 		DB:                db,
 		Embedder:          NewDeterministicEmbedder(),
-		ModelID:           "t",
+		ModelID:           "bge-small-en-v1.5-int8-cls",
 		ProgressOut:       &buf,
 		ProgressThreshold: 100,
 		ProgressEvery:     1,
@@ -319,7 +319,7 @@ func TestBackfill_ReconcilesDenBeforeWriting(t *testing.T) {
 	res, err := Backfill(context.Background(), BackfillOptions{
 		DB:       db,
 		Embedder: NewDeterministicEmbedder(),
-		ModelID:  "test",
+		ModelID:  "bge-small-en-v1.5-int8-cls",
 	})
 	if err != nil {
 		t.Fatalf("Backfill: %v", err)
@@ -375,7 +375,7 @@ func TestCoverageInvariant_NumNeverExceedsDen(t *testing.T) {
 	res, err := Backfill(context.Background(), BackfillOptions{
 		DB:       db,
 		Embedder: NewDeterministicEmbedder(),
-		ModelID:  "t",
+		ModelID:  "bge-small-en-v1.5-int8-cls",
 	})
 	if err != nil {
 		t.Fatalf("Backfill: %v", err)
