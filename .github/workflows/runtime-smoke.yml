@@ -1,0 +1,97 @@
+name: Native runtime smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    name: runtime ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            platform: darwin/amd64
+            goos: darwin
+            goarch: amd64
+            semantic: '1'
+            binary: guild
+          - runner: windows-2025
+            platform: windows/amd64
+            goos: windows
+            goarch: amd64
+            semantic: '0'
+            binary: guild.exe
+          - runner: windows-11-arm
+            platform: windows/arm64
+            goos: windows
+            goarch: arm64
+            semantic: '0'
+            binary: guild.exe
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          architecture: ${{ matrix.goarch }}
+          cache: false
+      # Standard public runner labels are documented at:
+      # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+      # Windows deliberately ships the lexical fallback, with no ORT assets.
+      - name: Stage verified native Intel Mac assets
+        if: matrix.semantic == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging_dir=$(mktemp -d)
+          trap 'rm -rf "$staging_dir"' EXIT
+          model_version=$(tr -d '[:space:]' < .model-version)
+          for asset in model.onnx vocab.txt tokenizer.json MANIFEST.txt; do
+            curl --fail --silent --show-error --location --retry 3 \
+              "https://github.com/mathomhaus/guild/releases/download/model-v${model_version}/${asset}" \
+              --output "$staging_dir/$asset"
+          done
+          .github/scripts/verify-model-assets.sh "$staging_dir"
+          assets_dir=internal/lore/embed/assets/darwin_amd64
+          mkdir -p "$assets_dir"
+          cp "$staging_dir/model.onnx" "$staging_dir/vocab.txt" "$assets_dir/"
+          # Official v1.23.0 release asset digest, pinned independently of
+          # the downloaded archive. Update the version and digest together.
+          # https://api.github.com/repos/microsoft/onnxruntime/releases/tags/v1.23.0
+          ort_archive=onnxruntime-osx-x86_64-1.23.0.tgz
+          ort_sha256=a8e43edcaa349cbfc51578a7fc61ea2b88793ccf077b4bc65aca58999d20cf0f
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/$ort_archive" \
+            --output "$staging_dir/$ort_archive"
+          printf '%s  %s\n' "$ort_sha256" "$staging_dir/$ort_archive" | shasum -a 256 -c -
+          tar -xzf "$staging_dir/$ort_archive" -C "$staging_dir"
+          cp "$staging_dir/onnxruntime-osx-x86_64-1.23.0/lib/libonnxruntime.1.23.0.dylib" \
+            "$assets_dir/libonnxruntime.dylib"
+      - name: Build native release-equivalent binary
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          go build -trimpath -tags=withembed \
+            -ldflags "-s -w -X main.version=v0.0.0-rc.0 -X main.commit=${{ github.sha }} -X main.date=1970-01-01T00:00:00Z" \
+            -o "bin/${{ matrix.binary }}" ./cmd/guild
+      - name: Exercise the native binary in isolated homes
+        shell: bash
+        env:
+          GUILD_RELEASE_BINARY: ${{ github.workspace }}/bin/${{ matrix.binary }}
+          GUILD_RELEASE_EXPECT_SEMANTIC: ${{ matrix.semantic }}
+        # Execute the binary rather than treating cross-compilation as a
+        # runtime check. No -race: Windows ARM64 does not support it.
+        run: go test -count=1 -timeout=10m -v -run '^TestReleaseBinaryRuntime$' ./tests/release
