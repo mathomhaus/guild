@@ -28,6 +28,7 @@ package install
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -283,6 +284,15 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 				registered, configuredPath := isGuildRegistered(opts.execCmdFn, instr.ListArgv)
 				if registered {
 					switch comparePaths(configuredPath, currentBinPath) {
+					case pathMissing:
+						// HTTP transports and name-only list entries are still
+						// registrations. Preserve them unless replacement was
+						// explicitly requested; mcp add could overwrite them.
+						if !opts.Update {
+							fmt.Fprintf(opts.Out, "[✓] guild MCP already registered in %s without a command path — skipping; pass --update to replace\n", instr.Name)
+							result.AlreadyRegistered = append(result.AlreadyRegistered, instr.Name)
+							continue
+						}
 					case pathIdentical:
 						fmt.Fprintf(opts.Out, "[✓] guild MCP already registered in %s — skipping\n", instr.Name)
 						result.AlreadyRegistered = append(result.AlreadyRegistered, instr.Name)
@@ -302,8 +312,6 @@ func MCPInstall(ctx context.Context, opts MCPInstallOptions) (*MCPInstallResult,
 						// Fall through to (re-)install below; the client's
 						// install CLI overwrites or warns on duplicates.
 					}
-					// pathMissing → fall through to install (configured
-					// entry has no parseable command field).
 				}
 			}
 
@@ -477,19 +485,14 @@ func isGuildRegistered(execCmdFn func(string, ...string) *exec.Cmd, listArgv []s
 	return scanForGuildEntry(out)
 }
 
-// scanForGuildEntry reports whether stdout contains a line identifying
-// "guild" as a registered MCP server, and extracts the configured command
-// path when the line shape exposes one. Recognised shapes cover the CLI
-// outputs of Claude Code, Cursor, and Codex — "guild:" (Claude / Codex
-// human formats, "guild: <command> <args>"), a bare "guild" token, or a
-// "- guild" list entry. The match is anchored at line start (after
-// trimming leading whitespace and list markers) so a stray occurrence
-// inside a command value doesn't produce a false positive.
-//
-// The returned path is the first whitespace-separated token after the
-// "guild:" prefix, or "" when the line carries no command (bare token,
-// or list-marker shape without a colon).
+// scanForGuildEntry reports whether stdout contains a guild MCP registration,
+// and extracts the configured command path when the line shape exposes one.
+// Recognised shapes cover Claude/Cursor human CLI output ("guild:", bare
+// token, list markers) and Codex `mcp list --json` arrays.
 func scanForGuildEntry(out []byte) (registered bool, cmdPath string) {
+	if registered, cmdPath, parsed := scanGuildFromCodexJSON(out); parsed {
+		return registered, cmdPath
+	}
 	for _, raw := range strings.Split(string(out), "\n") {
 		line := strings.TrimSpace(raw)
 		line = strings.TrimPrefix(line, "- ")
@@ -513,6 +516,36 @@ func scanForGuildEntry(out []byte) (registered bool, cmdPath string) {
 		}
 	}
 	return false, ""
+}
+
+// scanGuildFromCodexJSON parses `codex mcp list --json` output. The second
+// return value is the configured stdio command path when present.
+func scanGuildFromCodexJSON(out []byte) (registered bool, cmdPath string, parsed bool) {
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed[0] != '[' {
+		return false, "", false
+	}
+	var entries []struct {
+		Name      string `json:"name"`
+		Transport struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"transport"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &entries); err != nil {
+		return false, "", false
+	}
+	parsed = true
+	for _, entry := range entries {
+		if entry.Name != "guild" {
+			continue
+		}
+		if entry.Transport.Type == "stdio" && entry.Transport.Command != "" {
+			return true, entry.Transport.Command, true
+		}
+		return true, "", true
+	}
+	return false, "", true
 }
 
 // pathComparison enumerates the three states from issue #61.

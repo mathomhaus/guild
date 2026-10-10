@@ -50,6 +50,16 @@ func (c Client) InstallCmdDisplay(binPath string) string {
 	return strings.Join(out, " ")
 }
 
+// CLIOnPath reports whether the client's CLI binary resolves via PATH.
+// Pure-config clients (empty CLIProbe) are treated as callable.
+func (c Client) CLIOnPath() bool {
+	if c.CLIProbe == "" {
+		return true
+	}
+	_, err := exec.LookPath(c.CLIProbe)
+	return err == nil
+}
+
 // Detected returns true if this client appears installed on the system.
 // Check order: CLI on PATH → config file exists.
 func (c Client) Detected() bool {
@@ -68,6 +78,19 @@ func (c Client) Detected() bool {
 		}
 	}
 	return false
+}
+
+// partitionCallableClients splits detected clients into those whose CLI is on
+// PATH (callable) and those detected only via a config-file probe (skipped).
+func partitionCallableClients(clients []Client) (callable, skipped []Client) {
+	for _, c := range clients {
+		if c.CLIOnPath() {
+			callable = append(callable, c)
+		} else {
+			skipped = append(skipped, c)
+		}
+	}
+	return callable, skipped
 }
 
 // Clients is the supported-client registry. Adding a new client means
@@ -98,8 +121,8 @@ var Clients = []Client{
 		InstallArgv: func(b string) []string {
 			return []string{"codex", "mcp", "add", "guild", "--", b, "mcp", "serve"}
 		},
-		// ListArgv left nil until `codex mcp list` output shape is verified
-		// against a real run; nil disables the pre-check and the install
-		// attempt proceeds as before.
+		// JSON exposes the registration's transport and command without
+		// relying on a human table layout. Issue #14.
+		ListArgv: func() []string { return []string{"codex", "mcp", "list", "--json"} },
 	},
 }

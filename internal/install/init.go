@@ -145,16 +145,17 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 
 	// Detect which MCP host(s) are present. opts.clients lets tests
 	// inject a fake set without running real detection.
-	var detected []Client
+	var allDetected []Client
 	if opts.clients != nil {
 		for _, c := range opts.clients {
 			if c.Detected() {
-				detected = append(detected, c)
+				allDetected = append(allDetected, c)
 			}
 		}
 	} else {
-		detected = detectHosts()
+		allDetected = detectHosts()
 	}
+	callableClients, skippedMissingCLI := partitionCallableClients(allDetected)
 	binPath := "guild"
 	if exe, err := resolveAbsBinPath(os.Executable); err == nil {
 		binPath = exe
@@ -178,10 +179,14 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 	case agentsSkip:
 		fmt.Fprintln(opts.Out, "  [✓] AGENTS.md — guild section up-to-date → skip")
 	}
-	if len(detected) > 0 {
-		for _, c := range detected {
+	if len(allDetected) > 0 {
+		for _, c := range callableClients {
 			fmt.Fprintf(opts.Out, "  [?] register guild MCP — detected: %s\n        command: %s\n",
 				c.Name, c.InstallCmdDisplay(binPath))
+		}
+		for _, c := range skippedMissingCLI {
+			fmt.Fprintf(opts.Out, "  [i] register guild MCP — skipping %s: %s not on PATH\n",
+				c.Name, c.CLIProbe)
 		}
 	} else {
 		fmt.Fprintln(opts.Out, "  [?] register guild MCP — no host detected; see `guild mcp install` for options")
@@ -293,7 +298,7 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 	// Delegate to MCPInstall with Run: true so each detected client gets a
 	// per-client [Y/n] confirm and the registration command actually executes.
 	// No-client path keeps the manual-setup hint.
-	if len(detected) > 0 {
+	if len(callableClients) > 0 {
 		fmt.Fprintln(opts.Out)
 		execFn := opts.executableFn
 		if execFn == nil {
@@ -304,14 +309,14 @@ func Init(ctx context.Context, repoRoot string, opts InitOptions) (*InitResult, 
 			Yes:          opts.Yes,
 			Out:          opts.Out,
 			In:           opts.In,
-			clients:      detected,
+			clients:      callableClients,
 			executableFn: execFn,
 			execCmdFn:    opts.execCmdFn,
 		}
 		if _, err := MCPInstall(ctx, mcpOpts); err != nil {
 			return nil, fmt.Errorf("install: mcp register: %w", err)
 		}
-	} else {
+	} else if len(allDetected) == 0 {
 		fmt.Fprintln(opts.Out)
 		fmt.Fprintln(opts.Out, "  [i] no MCP client detected — see `guild mcp install` for manual setup")
 	}
