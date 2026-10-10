@@ -46,7 +46,7 @@ func (w *Watcher) addGitWatch(root Root) {
 			"project", root.Project, "path", gitDir)
 		return
 	}
-	if err := w.fs.Add(gitDir); err != nil {
+	if err := w.addWatch(gitDir); err != nil {
 		w.log.Warn("watch: cannot watch .git; skipping git watch",
 			"project", root.Project, "path", gitDir, "err", err)
 		return
@@ -60,7 +60,13 @@ func (w *Watcher) addGitWatch(root Root) {
 // directory must still be watched. Errors degrade quietly.
 func (w *Watcher) addRefDirTree(dir string) {
 	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if w.watchErr != nil {
+			return fs.SkipAll
+		}
 		if err != nil {
+			if resourceExhausted(err) {
+				w.watchErr = err
+			}
 			w.log.Warn("watch: skipping unreadable ref path", "path", path, "err", err)
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
@@ -70,7 +76,7 @@ func (w *Watcher) addRefDirTree(dir string) {
 		if !d.IsDir() {
 			return nil
 		}
-		if addErr := w.fs.Add(path); addErr != nil {
+		if addErr := w.addWatch(path); addErr != nil {
 			w.log.Warn("watch: cannot watch ref directory; skipping", "path", path, "err", addErr)
 			return fs.SkipDir
 		}

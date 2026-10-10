@@ -95,6 +95,10 @@ type Event struct {
 
 // Options tunes a Watcher. The zero value is usable.
 type Options struct {
+	// MaxWatchPaths can lower the native registration budget, including
+	// files implicitly watched by kqueue. Zero uses DefaultMaxWatchPaths,
+	// further limited to a quarter of the process file-descriptor limit.
+	MaxWatchPaths int
 	// Debounce is the quiet window per normalized event: emission
 	// waits until this long after the last raw filesystem event for
 	// the same {Project, Path, Kind}. Non-positive means
@@ -128,6 +132,11 @@ type Watcher struct {
 
 	fs  *fsnotify.Watcher
 	out chan Event
+	// Construction and then run exclusively own this resource accounting.
+	nativePaths    map[string]struct{}
+	maxPaths       int
+	watchErr       error
+	releaseBackend func()
 
 	// pendingEvents is touched only by the run goroutine.
 	pendingEvents map[Event]*pending
@@ -139,8 +148,10 @@ type Watcher struct {
 }
 
 // New starts watching the given roots and returns the running
-// Watcher. Every Root.Path must be absolute; that is the only
-// per-root hard failure. A root that is missing or unreadable is
+// Watcher. Every Root.Path must be absolute. Resource exhaustion or
+// exceeding the registration budget closes the backend and returns an
+// error, allowing the daemon to fall back to query-time staleness.
+// A root that is missing or unreadable is
 // logged and skipped so one stale registration cannot prevent the
 // rest from being watched.
 func New(roots []Root, opts Options) (*Watcher, error) {
@@ -165,14 +176,17 @@ func New(roots []Root, opts Options) (*Watcher, error) {
 	}
 
 	w := &Watcher{
-		roots:         make([]Root, 0, len(roots)),
-		debounce:      debounce,
-		log:           logger,
-		fs:            fsw,
-		out:           make(chan Event, eventBuffer),
-		pendingEvents: make(map[Event]*pending),
-		done:          make(chan struct{}),
-		loopDone:      make(chan struct{}),
+		roots:          make([]Root, 0, len(roots)),
+		debounce:       debounce,
+		log:            logger,
+		fs:             fsw,
+		out:            make(chan Event, eventBuffer),
+		nativePaths:    make(map[string]struct{}),
+		maxPaths:       watchPathLimit(opts.MaxWatchPaths),
+		releaseBackend: func() { _ = fsw.Close() },
+		pendingEvents:  make(map[Event]*pending),
+		done:           make(chan struct{}),
+		loopDone:       make(chan struct{}),
 	}
 	for _, r := range roots {
 		w.roots = append(w.roots, Root{Project: r.Project, Path: filepath.Clean(r.Path)})
@@ -185,7 +199,13 @@ func New(roots []Root, opts Options) (*Watcher, error) {
 
 	for _, r := range w.roots {
 		w.addDirTree(r.Path)
-		w.addGitWatch(r)
+		if w.watchErr == nil {
+			w.addGitWatch(r)
+		}
+		if w.watchErr != nil {
+			_ = fsw.Close()
+			return nil, fmt.Errorf("watch: registration stopped: %w", w.watchErr)
+		}
 	}
 
 	go w.run()
@@ -224,6 +244,11 @@ var ignoredDirs = map[string]bool{
 func (w *Watcher) run() {
 	defer close(w.loopDone)
 	defer close(w.out)
+	defer func() {
+		if w.releaseBackend != nil {
+			w.releaseBackend()
+		}
+	}()
 
 	timer := time.NewTimer(w.debounce)
 	if !timer.Stop() {
@@ -240,10 +265,21 @@ func (w *Watcher) run() {
 				w.flush(time.Time{}) // emit everything still pending
 				return
 			}
-			w.handleRaw(raw)
+			w.trackNativeEvent(raw)
+			if w.watchErr == nil {
+				w.handleRaw(raw)
+			}
+			if w.watchErr != nil {
+				w.log.Warn("watch: resource budget lost; degraded to query-time staleness", "err", w.watchErr)
+				return
+			}
 			w.rescheduleFlush(timer)
 		case err, ok := <-w.fs.Errors:
 			if !ok {
+				return
+			}
+			if resourceExhausted(err) {
+				w.log.Warn("watch: backend exhausted; degraded to query-time staleness", "err", err)
 				return
 			}
 			w.log.Warn("watch: backend error; continuing", "err", err)
@@ -388,7 +424,13 @@ func hasIgnoredComponent(rel string) bool {
 // the tree still gets watched.
 func (w *Watcher) addDirTree(dir string) {
 	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if w.watchErr != nil {
+			return fs.SkipAll
+		}
 		if err != nil {
+			if resourceExhausted(err) {
+				w.watchErr = err
+			}
 			w.log.Warn("watch: skipping unreadable path", "path", path, "err", err)
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
@@ -401,7 +443,7 @@ func (w *Watcher) addDirTree(dir string) {
 		if path != dir && ignoredDirs[d.Name()] {
 			return fs.SkipDir
 		}
-		if addErr := w.fs.Add(path); addErr != nil {
+		if addErr := w.addWatch(path); addErr != nil {
 			w.log.Warn("watch: cannot watch directory; skipping", "path", path, "err", addErr)
 			return fs.SkipDir
 		}

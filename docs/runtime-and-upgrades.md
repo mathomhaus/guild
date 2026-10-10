@@ -15,6 +15,13 @@ limit is three quests per debounced event batch. These quests ask an agent or
 person to review the knowledge. The watcher does not automatically seal,
 reforge, or rewrite the cited entry.
 
+Watching is bounded to 4,096 native paths and at most one quarter of the
+process file-descriptor limit. macOS counts files implicitly watched by kqueue
+as well as directories. If registration or later growth exceeds this budget,
+or the backend exhausts OS resources, Guild closes all watcher handles and
+falls back to query-time staleness checks. MCP, SQLite, and daemon sessions
+remain available; daemon status reports degraded watching and rescans retry.
+
 The daemon also renews leases for connected sessions and can return an expired
 claim to the board after its session disappears. The default lease lasts ten
 minutes, with a thirty-second heartbeat and a one-minute reaper interval.
