@@ -816,6 +816,7 @@ func TestMCPInstall_Run_PreservesRegistrationWithoutCommand(t *testing.T) {
 				c := alwaysDetected("Codex", func(b string) []string {
 					return []string{"codex", "mcp", "add", "guild", "--", b, "mcp", "serve"}
 				})
+				c.CLIProbe = "sh" // available on the isolated Unix PATH
 				c.ListArgv = func() []string { return []string{"codex-list"} }
 				var buf bytes.Buffer
 				result, err := MCPInstall(context.Background(), MCPInstallOptions{
