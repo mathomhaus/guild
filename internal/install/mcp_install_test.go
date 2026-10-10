@@ -806,6 +806,12 @@ func TestMCPInstall_Run_PreservesRegistrationWithoutCommand(t *testing.T) {
 	} {
 		for _, mode := range []string{"default", "update", "force"} {
 			t.Run(output+"/"+mode, func(t *testing.T) {
+				// Match a clean CI runner: no installed guild may rescue an
+				// invalid executable fixture through durable paths or PATH.
+				t.Setenv("HOME", t.TempDir())
+				t.Setenv("GOPATH", t.TempDir())
+				t.Setenv("GOBIN", t.TempDir())
+				t.Setenv("PATH", "/usr/bin:/bin")
 				var installCalls, listCalls int
 				c := alwaysDetected("Codex", func(b string) []string {
 					return []string{"codex", "mcp", "add", "guild", "--", b, "mcp", "serve"}
@@ -815,7 +821,7 @@ func TestMCPInstall_Run_PreservesRegistrationWithoutCommand(t *testing.T) {
 				result, err := MCPInstall(context.Background(), MCPInstallOptions{
 					Run: true, Yes: true, Update: mode == "update", Force: mode == "force",
 					Out: &buf, In: &bytes.Buffer{}, clients: []Client{c},
-					executableFn: func() (string, error) { return filepath.Join(t.TempDir(), "guild"), nil },
+					executableFn: fakeExecutable(t),
 					lookPathFn:   func(name string) (string, error) { return name, nil },
 					execCmdFn: func(name string, _ ...string) *exec.Cmd {
 						if name == "codex-list" {
