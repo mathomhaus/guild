@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mathomhaus/guild/internal/command"
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // Quest leases are the liveness layer for daemon-mediated claims
@@ -218,9 +219,9 @@ func (a *DBLeaseAcquirer) RenewLeaseActivity(ctx context.Context, projectID, tas
 // new session id refreshes the single (project_id, task_id) row rather
 // than duplicating it.
 //
-// SQLITE_BUSY is retried up to three times, the same shape as the accept
-// trail writer (accept.go writeAcceptTrail), because lease writes
-// contend with the same WAL as concurrent accepts.
+// Busy or locked errors are retried up to three times, the same shape
+// as the accept trail writer (accept.go writeAcceptTrail), because
+// lease writes contend with the same WAL as concurrent accepts.
 func AcquireLease(ctx context.Context, db *sql.DB, projectID, taskID, sessionID, holder string, now time.Time, ttl time.Duration) error {
 	if db == nil {
 		return fmt.Errorf("quest: acquire lease: nil db")
@@ -507,10 +508,11 @@ func DeleteLease(ctx context.Context, db *sql.DB, projectID, taskID string) erro
 	})
 }
 
-// withBusyRetry runs fn up to three times, retrying only on SQLITE_BUSY.
-// Mirrors the accept trail writer's contention handling (accept.go
-// writeAcceptTrail) so lease writes survive WAL contention with
-// concurrent accepts without endangering any primary claim.
+// withBusyRetry runs fn up to three times, retrying only on busy/locked
+// sqlite errors (storage.IsBusy). Mirrors the accept trail writer's
+// contention handling (accept.go writeAcceptTrail) so lease writes
+// survive WAL contention with concurrent accepts without endangering
+// any primary claim.
 func withBusyRetry(fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -519,7 +521,7 @@ func withBusyRetry(fn func() error) error {
 			return nil
 		}
 		lastErr = err
-		if !isBusyErr(err.Error()) {
+		if !storage.IsBusy(err) {
 			return err
 		}
 	}

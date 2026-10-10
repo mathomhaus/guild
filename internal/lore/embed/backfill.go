@@ -15,6 +15,8 @@ import (
 	"log/slog"
 	"strconv"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // activeEntriesPredicate is the embed-package copy of the canonical predicate
@@ -630,7 +632,7 @@ func beginImmediateLocal(ctx context.Context, db *sql.DB, op string) (*sql.Conn,
 		if beginErr == nil {
 			break
 		}
-		if !isSQLiteBusy(beginErr.Error()) {
+		if !storage.IsBusy(beginErr) {
 			_ = conn.Close()
 			return nil, nil, fmt.Errorf("embed: %s: begin immediate: %w", op, beginErr)
 		}
@@ -657,13 +659,6 @@ func beginImmediateLocal(ctx context.Context, db *sql.DB, op string) (*sql.Conn,
 	return conn, rollback, nil
 }
 
-// isSQLiteBusy recognizes the modernc.org/sqlite busy/locked surfacing.
-// Kept string-based (not sqlite3.Error) because the driver is pure-Go
-// and wraps errors into fmt.Errorf("%w", ...).
-func isSQLiteBusy(msg string) bool {
-	return containsAny(msg, "SQLITE_BUSY", "database is locked", "SQLITE_LOCKED")
-}
-
 // pickDominantClass returns the err_class with the highest count, or "" if
 // the map is empty. Ties resolve to the alphabetically first class so the
 // output is deterministic across runs (the dominant-class line is read by
@@ -681,15 +676,4 @@ func pickDominantClass(counts map[string]int) string {
 		}
 	}
 	return best
-}
-
-func containsAny(s string, needles ...string) bool {
-	for _, n := range needles {
-		for i := 0; i+len(n) <= len(s); i++ {
-			if s[i:i+len(n)] == n {
-				return true
-			}
-		}
-	}
-	return false
 }
