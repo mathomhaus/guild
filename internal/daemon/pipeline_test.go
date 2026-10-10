@@ -140,12 +140,18 @@ func TestPipelineFileEventFlagsAndCounts(t *testing.T) {
 	}
 
 	waitFor(t, "the file event to be processed", func() bool {
-		return p.Status().EventsSeen >= 1
+		// EventsSeen advances before Process runs. Wait for its results,
+		// otherwise the assertions can race with the counter updates.
+		st := p.Status()
+		return st.SignalsRecorded >= 1 && st.QuestsPosted >= 1
 	})
 
 	st := p.Status()
 	if st.ProjectsWatched != 1 {
 		t.Fatalf("ProjectsWatched=%d, want 1", st.ProjectsWatched)
+	}
+	if st.EventsSeen < 1 {
+		t.Fatalf("EventsSeen=%d, want >=1", st.EventsSeen)
 	}
 	if st.SignalsRecorded < 1 {
 		t.Fatalf("SignalsRecorded=%d, want >=1", st.SignalsRecorded)
