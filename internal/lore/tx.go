@@ -4,16 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // beginImmediate is the lore-package-local helper matching the one in
-// internal/quest/tx.go and internal/lore/embed/tx.go. Duplicated (not
+// internal/quest/tx.go and the embed helpers in
+// internal/lore/embed/{health,backfill}.go. Duplicated (not
 // imported) because lore sits below quest and above embed in the
 // dependency graph (hexagonal boundary) and pulling either neighbour
-// in would flip an arrow. See internal/quest/tx.go for the full
-// design rationale.
+// in would flip an arrow. internal/storage is the low-level exception:
+// driver types only, no lore/quest imports. See internal/quest/tx.go
+// for the full design rationale.
 //
 // Caller pattern:
 //
@@ -38,7 +41,7 @@ func beginImmediate(ctx context.Context, db *sql.DB, opName string) (*sql.Conn, 
 		if beginErr == nil {
 			break
 		}
-		if !isBusyErr(beginErr.Error()) {
+		if !storage.IsBusy(beginErr) {
 			_ = conn.Close()
 			return nil, nil, fmt.Errorf("%s: begin immediate: %w", opName, beginErr)
 		}
@@ -65,13 +68,4 @@ func beginImmediate(ctx context.Context, db *sql.DB, opName string) (*sql.Conn, 
 		}
 	}
 	return conn, rollback, nil
-}
-
-// isBusyErr reports whether err looks like a SQLITE_BUSY from the
-// modernc driver. Matches on the substring rather than a typed error
-// because modernc returns a plain error whose string contains
-// "database is locked (5) (SQLITE_BUSY)".
-func isBusyErr(msg string) bool {
-	return strings.Contains(msg, "SQLITE_BUSY") ||
-		strings.Contains(msg, "database is locked")
 }

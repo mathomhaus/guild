@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // trailWriterFunc is the signature for post-claim observability writes.
@@ -85,7 +87,7 @@ func Accept(ctx context.Context, db *sql.DB, projectID, taskID, owner string) (*
 	//
 	// The follow-up writes (claimed event + checkpoint note) are
 	// non-critical for the atomicity invariant — they're observability.
-	// They go into a small follow-up tx that can SQLITE_BUSY-retry
+	// They go into a small follow-up tx that can busy-retry
 	// without endangering the primary claim.
 	res, err := db.ExecContext(ctx,
 		`UPDATE task_status
@@ -100,10 +102,10 @@ func Accept(ctx context.Context, db *sql.DB, projectID, taskID, owner string) (*
 		owner, now, now, projectID, taskID,
 	)
 	if err != nil {
-		// SQLITE_BUSY during a write means another writer got there
-		// first (or our busy_timeout expired). Treat as a contention
-		// loss equivalent to "already claimed" — probe current state
-		// for the error shape.
+		// A busy or locked error during a write means another writer
+		// got there first (or our busy_timeout expired). Treat as a
+		// contention loss equivalent to "already claimed" — probe
+		// current state for the error shape.
 		return nil, toAlreadyClaimedOrErr(ctx, db, projectID, taskID, err)
 	}
 	rows, err := res.RowsAffected()
@@ -141,8 +143,8 @@ func Accept(ctx context.Context, db *sql.DB, projectID, taskID, owner string) (*
 	return Load(ctx, db, projectID, taskID)
 }
 
-// toAlreadyClaimedOrErr maps a SQLITE_BUSY-style UPDATE failure to an
-// AlreadyClaimedError where possible. SQLITE_BUSY after the WAL
+// toAlreadyClaimedOrErr maps a busy/locked UPDATE failure to an
+// AlreadyClaimedError where possible. A busy error after the WAL
 // busy_timeout expires means *some* concurrent writer held the lock
 // long enough that we gave up — which in the Accept path means "we
 // lost the race." Surfacing this as ErrAlreadyClaimed (with the
@@ -150,10 +152,9 @@ func Accept(ctx context.Context, db *sql.DB, projectID, taskID, owner string) (*
 // exactly: exactly one goroutine returns nil, the rest return
 // ErrAlreadyClaimed.
 //
-// For non-BUSY errors we return the raw error wrapped.
+// For non-busy errors we return the raw error wrapped.
 func toAlreadyClaimedOrErr(ctx context.Context, db *sql.DB, projectID, taskID string, err error) error {
-	msg := err.Error()
-	if !isBusyErr(msg) {
+	if !storage.IsBusy(err) {
 		return fmt.Errorf("quest: accept: update: %w", err)
 	}
 	var curStatus, curOwner sql.NullString
@@ -169,26 +170,17 @@ func toAlreadyClaimedOrErr(ctx context.Context, db *sql.DB, projectID, taskID st
 	}
 }
 
-// isBusyErr reports whether err looks like a SQLITE_BUSY from the
-// modernc driver. We match on the substring rather than unwrapping a
-// typed error because the driver returns a plain error whose string
-// contains "database is locked (5) (SQLITE_BUSY)".
-func isBusyErr(msg string) bool {
-	return strings.Contains(msg, "SQLITE_BUSY") ||
-		strings.Contains(msg, "database is locked")
-}
-
 // writeAcceptTrail writes the `claimed` event and the auto-checkpoint
 // note into a small follow-up transaction. Non-critical for atomicity.
-// Retries on SQLITE_BUSY because these writes are still subject to
-// contention with other Accept/Clear calls.
+// Retries on busy/locked errors because these writes are still subject
+// to contention with other Accept/Clear calls.
 func writeAcceptTrail(ctx context.Context, db *sql.DB, projectID, taskID, owner, createdAt string) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusy(err) {
 				return fmt.Errorf("quest: accept: begin trail tx: %w", err)
 			}
 			continue
@@ -196,7 +188,7 @@ func writeAcceptTrail(ctx context.Context, db *sql.DB, projectID, taskID, owner,
 		if err := emitEvent(ctx, tx, projectID, taskID, EventClaimed, owner, "", createdAt); err != nil {
 			_ = tx.Rollback()
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusy(err) {
 				return err
 			}
 			continue
@@ -209,14 +201,14 @@ func writeAcceptTrail(ctx context.Context, db *sql.DB, projectID, taskID, owner,
 		); err != nil {
 			_ = tx.Rollback()
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusy(err) {
 				return fmt.Errorf("quest: accept: write checkpoint: %w", err)
 			}
 			continue
 		}
 		if err := tx.Commit(); err != nil {
 			lastErr = err
-			if !isBusyErr(err.Error()) {
+			if !storage.IsBusy(err) {
 				return fmt.Errorf("quest: accept: commit trail: %w", err)
 			}
 			continue

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mathomhaus/guild/internal/storage"
 )
 
 // EmbedderState represents the operational state of the embedder as recorded
@@ -524,7 +526,7 @@ func beginImmediateConn(ctx context.Context, db *sql.DB, opName string) (*sql.Co
 		if beginErr == nil {
 			break
 		}
-		if !isEmbedBusyErr(beginErr.Error()) {
+		if !storage.IsBusy(beginErr) {
 			_ = conn.Close()
 			return nil, nil, fmt.Errorf("embed: %s: begin immediate: %w", opName, beginErr)
 		}
@@ -551,13 +553,6 @@ func beginImmediateConn(ctx context.Context, db *sql.DB, opName string) (*sql.Co
 		}
 	}
 	return conn, rollback, nil
-}
-
-// isEmbedBusyErr reports whether the SQLite error string indicates a busy/
-// locked state that should be retried.
-func isEmbedBusyErr(msg string) bool {
-	return strings.Contains(msg, "SQLITE_BUSY") ||
-		strings.Contains(msg, "database is locked")
 }
 
 // quantizeInt8 applies the canonical finite, nonzero quantization contract.
