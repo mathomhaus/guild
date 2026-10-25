@@ -9,9 +9,8 @@ import (
 )
 
 type ActiveInput struct {
-	// Project is optional — Active() is cross-project by design, but
-	// the surface still carries the field so the MCP bootstrap-first
-	// contract (active session required) is satisfied.
+	// Project is optional. Active() is cross-project by default; an
+	// explicit project limits the list to that project.
 	Project string `json:"project,omitempty"`
 }
 
@@ -28,18 +27,21 @@ var ActiveCommand = &command.Command[ActiveInput, ActiveOutput]{
 		{Name: "project", Short: "p", Kind: command.ArgFlag, Type: command.ArgString, Help: "project override"},
 	},
 	Handler: func(ctx context.Context, d command.Deps, in ActiveInput) (ActiveOutput, error) {
-		// Active() doesn't need a resolved project, but the MCP path
-		// requires an active session — call ResolveProj for the side
-		// effect of validating bootstrap, discard the result.
-		if _, err := d.ResolveProj(ctx, in.Project); err != nil {
+		// The MCP path requires an active session, so ResolveProj runs
+		// even without an explicit project; only an explicit one filters.
+		pid, err := d.ResolveProj(ctx, in.Project)
+		if err != nil {
 			return ActiveOutput{}, err
+		}
+		if in.Project == "" {
+			pid = ""
 		}
 		db, err := d.OpenDB(ctx)
 		if err != nil {
 			return ActiveOutput{}, err
 		}
 		defer func() { _ = db.Close() }()
-		qs, err := Active(ctx, db)
+		qs, err := Active(ctx, db, pid)
 		if err != nil {
 			return ActiveOutput{}, err
 		}

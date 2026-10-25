@@ -7,18 +7,19 @@ import (
 )
 
 // Active returns all quests currently in status='in_progress' across
-// every project registered in the DB. The result is sorted by
-// project_id ascending, then claimed_at ascending (oldest first within
-// each project).
-func Active(ctx context.Context, db *sql.DB) ([]*Quest, error) {
+// every project registered in the DB, or only in projectID when it is
+// non-empty. The result is sorted by project_id ascending, then
+// claimed_at ascending (oldest first within each project).
+func Active(ctx context.Context, db *sql.DB, projectID string) ([]*Quest, error) {
 	if db == nil {
 		return nil, fmt.Errorf("quest: active: nil db")
 	}
 
 	rows, err := db.QueryContext(ctx,
 		`SELECT project_id, task_id FROM task_status
-		 WHERE status = 'in_progress'
+		 WHERE status = 'in_progress' AND (? = '' OR project_id = ?)
 		 ORDER BY project_id ASC, claimed_at ASC`,
+		projectID, projectID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("quest: active: query: %w", err)

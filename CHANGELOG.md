@@ -17,6 +17,8 @@ it reaches 1.0.
 ### Fixed
 
 - Reject invalid `lore catalog --kind` overrides before importing entries.
+- `quest active -p <project>` now lists only that project's in-progress
+  quests instead of every project's.
 
 ### Documentation
 
